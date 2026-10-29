@@ -1,15 +1,18 @@
 import os
 import re
+import asyncio
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pyrogram import Client, filters
 
-# Cloud Server Health Check Server
+# Cloud Server Health Check Web Server
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"Bot is running 24/7!")
+    def log_message(self, format, *args):
+        return
 
 def start_server():
     port = int(os.environ.get("PORT", 8080))
@@ -17,6 +20,13 @@ def start_server():
     server.serve_forever()
 
 threading.Thread(target=start_server, daemon=True).start()
+
+# Fix for Python 3.10+ event loop in cloud environments
+try:
+    loop = asyncio.get_event_loop()
+except RuntimeError:
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
 
 # --- Bot Credentials ---
 API_ID = 34563277
