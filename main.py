@@ -3,36 +3,28 @@ import re
 import asyncio
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from pyrogram import Client, filters
+from pyrogram import Client, filters, idle
 
-# Cloud Server Health Check Web Server
-class HealthCheckHandler(BaseHTTPRequestHandler):
+# Web Server for Render Free Tier
+class HealthCheck(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Bot is running 24/7!")
+        self.wfile.write(b"Bot is alive 24/7!")
     def log_message(self, format, *args):
         return
 
-def start_server():
+def run_web_server():
     port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    server = HTTPServer(("0.0.0.0", port), HealthCheck)
     server.serve_forever()
 
-threading.Thread(target=start_server, daemon=True).start()
-
-# Fix for Python 3.10+ event loop in cloud environments
-try:
-    loop = asyncio.get_event_loop()
-except RuntimeError:
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+threading.Thread(target=run_web_server, daemon=True).start()
 
 # --- Bot Credentials ---
 API_ID = 34563277
 API_HASH = "7cc2cab7ad6241204f83c0a7fe52e5df"
 BOT_TOKEN = "9243394920:AAGg8P8oWdJOETRt6yBvBhDEJTnkrEMKNlM"
-
 TARGET_CHANNEL = -1004308752538
 
 MY_LINK = "https://t.me/PhProMod"
@@ -105,5 +97,12 @@ async def process_forwarded_post(client, message):
     except Exception as e:
         await status.edit_text(f"❌ Failed to post: {str(e)}")
 
-print("24/7 Cloud Bot is starting...")
-bot.run()
+# Modern Python 3.11+ Runner
+async def main():
+    await bot.start()
+    print(">>> 24/7 Cloud Bot is LIVE and Running! <<<")
+    await idle()
+    await bot.stop()
+
+if __name__ == "__main__":
+    asyncio.run(main())
