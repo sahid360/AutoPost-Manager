@@ -4,13 +4,13 @@ import asyncio
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# --- ১. সবার আগে ইভেন্ট লুপ সেট করা হলো (যাতে আর কখনো RuntimeError না আসে) ---
+# --- Event Loop Fix ---
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
 
 from pyrogram import Client, filters, idle
 
-# Web Server for Render Free Tier
+# Web Server for Render
 class HealthCheck(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -32,26 +32,44 @@ API_HASH = "7cc2cab7ad6241204f83c0a7fe52e5df"
 BOT_TOKEN = "9243394920:AAGg8P8oWdJOETRt6yBvBhDEJTnkrEMKNlM"
 TARGET_CHANNEL = -1004308752538
 
-MY_LINK = "https://t.me/PhProMod"
-MY_USERNAME = "@PhProMod"
-
 bot = Client("ph_session", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
 
+# আপনার পছন্দের ক্যাপশন ফরম্যাট
 def clean_caption(text):
+    footer = "⌲ @PhProMod\nShare It With Your Friends 👥"
     if not text:
-        return f"\n\n📢 Join: {MY_LINK}\n👤 Credit: {MY_USERNAME}"
+        return footer
+    
+    # অন্যের সব লিংক ও ওয়েবসাইট রিমুভ
     text = re.sub(r'https?://\S+|www\.\S+|t\.me/\S+', '', text)
+    # অন্যের @username রিমুভ
     text = re.sub(r'@\w+', '', text)
+    # আগের কোনো Share লেখা থাকলে তা রিমুভ
+    text = re.sub(r'Share It With Your Friends.*', '', text, flags=re.IGNORECASE)
+    
     clean_text = text.strip()
-    return f"{clean_text}\n\n📢 Join: {MY_LINK}\n👤 Credit: {MY_USERNAME}"
+    return f"{clean_text}\n\n{footer}"
 
+# ফাইলের আসল নাম রেখে শেষে @PhProMod যোগ করার ফাংশন
 def clean_filename(original_name):
     if not original_name:
-        original_name = "file"
-    name_clean = re.sub(r'@\w+', '', original_name)
-    name_clean = re.sub(r'\[.*?\]|\(.*?\)', '', name_clean).strip()
-    name_clean = " ".join(name_clean.split())
-    return f"[PhProMod] {name_clean}"
+        original_name = "app.apk"
+        
+    base, ext = os.path.splitext(original_name)
+    
+    # অন্যের @username এবং ব্র্যাকেট রিমুভ
+    base_clean = re.sub(r'@\w+', '', base)
+    base_clean = re.sub(r'\[.*?\]|\(.*?\)', '', base_clean)
+    
+    # নামের শেষের অপ্রয়োজনীয় ড্যাশ (-) বা স্পেস বাদ দেওয়া
+    base_clean = re.sub(r'[\s\-_]+$', '', base_clean).strip()
+    base_clean = " ".join(base_clean.split())
+    
+    if not base_clean:
+        base_clean = "File"
+        
+    # আসল নামের শেষে আপনার নাম যোগ হবে: App name @PhProMod.apk
+    return f"{base_clean} @PhProMod{ext}"
 
 @bot.on_message(filters.command("start"))
 async def start_command(client, message):
@@ -102,7 +120,6 @@ async def process_forwarded_post(client, message):
     except Exception as e:
         await status.edit_text(f"❌ Failed to post: {str(e)}")
 
-# Safe Runner
 async def main():
     await bot.start()
     print(">>> 24/7 Cloud Bot is LIVE and Running! <<<")
