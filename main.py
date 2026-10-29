@@ -3,6 +3,11 @@ import re
 import asyncio
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
+
+# --- ১. সবার আগে ইভেন্ট লুপ সেট করা হলো (যাতে আর কখনো RuntimeError না আসে) ---
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
+
 from pyrogram import Client, filters, idle
 
 # Web Server for Render Free Tier
@@ -97,7 +102,7 @@ async def process_forwarded_post(client, message):
     except Exception as e:
         await status.edit_text(f"❌ Failed to post: {str(e)}")
 
-# Modern Python 3.11+ Runner
+# Safe Runner
 async def main():
     await bot.start()
     print(">>> 24/7 Cloud Bot is LIVE and Running! <<<")
@@ -105,4 +110,4 @@ async def main():
     await bot.stop()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    loop.run_until_complete(main())
