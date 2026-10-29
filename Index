@@ -1,0 +1,120 @@
+import os
+import re
+from pyrogram import Client, filters
+
+# --- Bot Credentials ---
+API_ID = 34563277
+API_HASH = "7cc2cab7ad6241204f83c0a7fe52e5df"
+BOT_TOKEN = "9243394920:AAGg8P8oWdJOETRt6yBvBhDEJTnkrEMKNlM"
+
+# Target Channel ID (Connected Successfully)
+TARGET_CHANNEL = -1004308752538
+
+# Replacement Links & Usernames
+MY_LINK = "https://t.me/PhProMod"
+MY_USERNAME = "@PhProMod"
+
+bot = Client("ph_session", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
+
+# Function to remove foreign links/usernames and append your info
+def clean_caption(text):
+    if not text:
+        return f"\n\n📢 Join: {MY_LINK}\n👤 Credit: {MY_USERNAME}"
+    
+    # Remove all URLs (http, https, t.me, www)
+    text = re.sub(r'https?://\S+|www\.\S+|t\.me/\S+', '', text)
+    # Remove foreign @usernames
+    text = re.sub(r'@\w+', '', text)
+    
+    clean_text = text.strip()
+    return f"{clean_text}\n\n📢 Join: {MY_LINK}\n👤 Credit: {MY_USERNAME}"
+
+# Function to rename files and remove foreign channel tags
+def clean_filename(original_name):
+    if not original_name:
+        original_name = "file"
+    
+    # Remove @username and brackets from filename
+    name_clean = re.sub(r'@\w+', '', original_name)
+    name_clean = re.sub(r'\[.*?\]|\(.*?\)', '', name_clean).strip()
+    name_clean = " ".join(name_clean.split())
+    
+    # Add your channel prefix
+    return f"[PhProMod] {name_clean}"
+
+@bot.on_message(filters.command("start"))
+async def start_command(client, message):
+    await message.reply_text(
+        "👋 **Hello! The Bot is Active and Ready.**\n\n"
+        "Forward any Video, APK, Image, or Text post here. "
+        "The bot will automatically rename it, clean foreign links, and post it to your channel!"
+    )
+
+@bot.on_message(filters.private)
+async def process_forwarded_post(client, message):
+    print("New post received! Processing...")
+    status = await message.reply_text("⏳ Processing post, please wait...")
+
+    try:
+        # 1. If the message is a Video
+        if message.video:
+            caption = clean_caption(message.caption)
+            new_name = clean_filename(message.video.file_name or "video.mp4")
+
+            await status.edit_text("📥 Downloading video...")
+            file_path = await message.download(file_name=new_name)
+
+            await status.edit_text("📤 Uploading video to your channel...")
+            await client.send_video(
+                chat_id=TARGET_CHANNEL,
+                video=file_path,
+                caption=caption,
+                file_name=new_name,
+                supports_streaming=True
+            )
+            if os.path.exists(file_path):
+                os.remove(file_path)
+
+        # 2. If the message is an APK, Document, or File
+        elif message.document:
+            caption = clean_caption(message.caption)
+            new_name = clean_filename(message.document.file_name)
+
+            await status.edit_text("📥 Downloading file...")
+            file_path = await message.download(file_name=new_name)
+
+            await status.edit_text("📤 Uploading file to your channel...")
+            await client.send_document(
+                chat_id=TARGET_CHANNEL,
+                document=file_path,
+                caption=caption,
+                file_name=new_name
+            )
+            if os.path.exists(file_path):
+                os.remove(file_path)
+
+        # 3. If the message is a Photo
+        elif message.photo:
+            caption = clean_caption(message.caption)
+            await status.edit_text("📤 Posting photo to your channel...")
+            await client.send_photo(
+                chat_id=TARGET_CHANNEL,
+                photo=message.photo.file_id,
+                caption=caption
+            )
+
+        # 4. If the message is plain Text
+        elif message.text:
+            text = clean_caption(message.text)
+            await status.edit_text("📤 Posting text to your channel...")
+            await client.send_message(chat_id=TARGET_CHANNEL, text=text)
+
+        await status.edit_text("✅ Successfully posted to your channel!")
+        print("Successfully posted to channel!")
+
+    except Exception as e:
+        print(f"Error occurred: {e}")
+        await status.edit_text(f"❌ Failed to post: {str(e)}")
+
+print("Bot is running successfully...")
+bot.run()
