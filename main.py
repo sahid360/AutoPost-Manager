@@ -3,172 +3,245 @@ import re
 import asyncio
 import threading
 import json
+import time
+from datetime import datetime
 import requests
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# --- Event Loop Fix ---
+# Event Loop setup for Cloud Hosting
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
 
 from pyrogram import Client, filters, idle
-from pyrogram.enums import ParseMode
+from pyrogram.enums import ParseMode, ChatMemberStatus
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.errors import UserNotParticipant
 
 # --- Bot Credentials ---
 API_ID = 34563277
 API_HASH = "7cc2cab7ad6241204f83c0a7fe52e5df"
 BOT_TOKEN = "9243394920:AAGg8P8oWdJOETRt6yBvBhDEJTnkrEMKNlM"
-FIREBASE_URL = "https://autopost-manager-c91ed-default-rtdb.firebaseio.com/settings.json"
 
-# Default Settings (যদি ফায়ারবেস খালি থাকে)
-DEFAULT_SETTINGS = {
-    "target_channel": -1004308752538,
-    "channel_tag": "@PhProMod",
-    "footer_text": "⌲ @PhProMod\nShare It With Your Friends 👥",
-    "remove_emojis": "⌲, 💫",
-    "remove_bengali": True,
-    "bold_first_line": True,
-    "admin_pin": "1234" # আপনার ড্যাশবোর্ডের গোপন পাসওয়ার্ড
-}
+# Super Admin Telegram ID (আপনার পার্সোনাল টেলিগ্রাম আইডি)
+SUPER_ADMIN_ID = 34563277 # এখানে আপনার টেলিগ্রামের নিজস্ব ইউজার আইডি দিতে পারেন
 
-# Settings Fetcher
-def get_settings():
+# Firebase URL
+FIREBASE_BASE_URL = "https://autopost-manager-c91ed-default-rtdb.firebaseio.com"
+
+# --- Firebase Helper Functions ---
+def db_get(endpoint):
     try:
-        res = requests.get(FIREBASE_URL, timeout=5)
-        if res.status_code == 200 and res.json():
-            data = res.json()
-            for key, val in DEFAULT_SETTINGS.items():
-                if key not in data:
-                    data[key] = val
-            return data
-    except Exception as e:
-        print(f"Firebase read error: {e}")
-    return DEFAULT_SETTINGS
+        r = requests.get(f"{FIREBASE_BASE_URL}/{endpoint}.json", timeout=5)
+        return r.json() or {}
+    except:
+        return {}
 
-# Initialize Firebase if empty
-try:
-    check = requests.get(FIREBASE_URL, timeout=5)
-    if not check.json():
-        requests.put(FIREBASE_URL, json=DEFAULT_SETTINGS, timeout=5)
-except Exception:
-    pass
+def db_put(endpoint, data):
+    try:
+        requests.put(f"{FIREBASE_BASE_URL}/{endpoint}.json", json=data, timeout=5)
+    except:
+        pass
 
-# --- Web Server & Admin Dashboard HTML ---
+def db_post(endpoint, data):
+    try:
+        requests.post(f"{FIREBASE_BASE_URL}/{endpoint}.json", json=data, timeout=5)
+    except:
+        pass
+
+# Ensure Global Config exists
+global_cfg = db_get("global_config")
+if not global_cfg:
+    db_put("global_config", {
+        "force_channel": "@PhProMod",
+        "global_blocked_words": "scam, fraud, 18+, betting",
+        "admin_pin": "1234",
+        "daily_stats": {}
+    })
+
+# --- Web Server & Super Admin Dashboard ---
 DASHBOARD_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AutoPost Manager Dashboard</title>
+    <title>SaaS Master Admin Panel</title>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 20px; }
-        .container { max-width: 600px; margin: auto; background: #1e293b; border-radius: 12px; padding: 24px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
-        h2 { text-align: center; color: #38bdf8; margin-top: 0; }
-        label { display: block; margin-top: 15px; font-weight: bold; color: #94a3b8; font-size: 14px; }
-        input[type="text"], input[type="password"], textarea { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #fff; box-sizing: border-box; margin-top: 6px; }
-        textarea { height: 80px; resize: vertical; }
-        .checkbox-group { display: flex; align-items: center; margin-top: 15px; gap: 10px; }
-        .checkbox-group input { width: 20px; height: 20px; accent-color: #38bdf8; }
-        button { width: 100%; background: #0284c7; color: #fff; padding: 14px; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; margin-top: 25px; transition: 0.3s; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0b0f19; color: #f3f4f6; margin: 0; padding: 15px; }
+        .container { max-width: 900px; margin: auto; }
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1f2937; padding-bottom: 15px; }
+        h1 { font-size: 20px; color: #38bdf8; margin: 0; }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin: 20px 0; }
+        .stat-card { background: #111827; padding: 16px; border-radius: 10px; border: 1px solid #1f2937; text-align: center; }
+        .stat-num { font-size: 26px; font-weight: bold; color: #38bdf8; margin-top: 5px; }
+        .card { background: #111827; padding: 20px; border-radius: 10px; border: 1px solid #1f2937; margin-bottom: 20px; }
+        h3 { margin-top: 0; color: #93c5fd; font-size: 16px; }
+        label { font-size: 13px; color: #9ca3af; display: block; margin-top: 10px; }
+        input[type="text"], input[type="password"], textarea { width: 100%; padding: 10px; background: #1f2937; border: 1px solid #374151; border-radius: 6px; color: #fff; margin-top: 5px; box-sizing: border-box; }
+        button { background: #0284c7; color: #fff; border: none; padding: 10px 16px; border-radius: 6px; font-weight: bold; cursor: pointer; margin-top: 15px; }
         button:hover { background: #0369a1; }
-        .status { text-align: center; margin-top: 15px; font-weight: bold; }
-        .success { color: #4ade80; }
-        .error { color: #f87171; }
+        .ban-btn { background: #dc2626; padding: 5px 10px; font-size: 12px; }
+        .unban-btn { background: #16a34a; padding: 5px 10px; font-size: 12px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 13px; }
+        th, td { text-align: left; padding: 10px; border-bottom: 1px solid #1f2937; }
+        th { color: #9ca3af; }
+        .logs-box { max-height: 250px; overflow-y: auto; font-family: monospace; font-size: 12px; background: #030712; padding: 10px; border-radius: 6px; }
+        .log-item { padding: 4px 0; border-bottom: 1px solid #111827; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h2>🤖 Bot Admin Panel</h2>
-        
-        <label>Admin Secret PIN:</label>
-        <input type="password" id="pin" placeholder="Enter PIN to save (Default: 1234)">
-
-        <label>Target Channel ID (মাইনাস সহ):</label>
-        <input type="text" id="target_channel">
-
-        <label>Channel Suffix Tag (ফাইলের নামের শেষে যা বসবে):</label>
-        <input type="text" id="channel_tag">
-
-        <label>Emojis to Remove (কমা দিয়ে লিখুন):</label>
-        <input type="text" id="remove_emojis" placeholder="⌲, 💫">
-
-        <label>Custom Footer / Share Text:</label>
-        <textarea id="footer_text"></textarea>
-
-        <div class="checkbox-group">
-            <input type="checkbox" id="remove_bengali">
-            <label style="margin: 0;">বাংলা টেক্সট স্বয়ংক্রিয়ভাবে রিমুভ করুন</label>
+        <div class="header">
+            <h1>🚀 AutoPost Manager SaaS Control</h1>
+            <div>
+                <input type="password" id="admin_pin" placeholder="PIN (Default: 1234)" style="width: 120px; padding: 6px;">
+            </div>
         </div>
 
-        <div class="checkbox-group">
-            <input type="checkbox" id="bold_first_line">
-            <label style="margin: 0;">১ম লাইন Bold (মোটা) রাখুন</label>
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div>Total Users</div>
+                <div class="stat-num" id="total_users">0</div>
+            </div>
+            <div class="stat-card">
+                <div>Posts Today</div>
+                <div class="stat-num" id="posts_today">0</div>
+            </div>
+            <div class="stat-card">
+                <div>Total Lifetime Posts</div>
+                <div class="stat-num" id="total_posts">0</div>
+            </div>
         </div>
 
-        <button onclick="saveSettings()">💾 Save Settings</button>
-        <div id="status" class="status"></div>
+        <!-- Global Settings -->
+        <div class="card">
+            <h3>🌐 Global Platform Settings</h3>
+            <label>Mandatory Join Channel (Force Sub):</label>
+            <input type="text" id="force_channel" placeholder="@ChannelUsername">
+
+            <label>Global Blocked Words (Posts containing these will be deleted/removed, comma-separated):</label>
+            <textarea id="global_blocked_words" placeholder="badword1, scam, link"></textarea>
+
+            <button onclick="saveGlobalConfig()">Save Global Settings</button>
+        </div>
+
+        <!-- Users Management -->
+        <div class="card">
+            <h3>👥 Registered Users Management</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>User ID</th>
+                        <th>Target Channel</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="users_table"></tbody>
+            </table>
+        </div>
+
+        <!-- Live Activity Logs -->
+        <div class="card">
+            <h3>📜 Live Posting Logs (Recent Activities)</h3>
+            <div class="logs-box" id="logs_container">Loading activities...</div>
+        </div>
     </div>
 
     <script>
-        const FIREBASE_URL = "https://autopost-manager-c91ed-default-rtdb.firebaseio.com/settings.json";
+        const FIREBASE_BASE = "https://autopost-manager-c91ed-default-rtdb.firebaseio.com";
 
-        async function loadSettings() {
+        async function loadDashboard() {
             try {
-                const res = await fetch(FIREBASE_URL);
-                const data = await res.json();
-                if(data) {
-                    document.getElementById('target_channel').value = data.target_channel || "";
-                    document.getElementById('channel_tag').value = data.channel_tag || "";
-                    document.getElementById('remove_emojis').value = data.remove_emojis || "";
-                    document.getElementById('footer_text').value = data.footer_text || "";
-                    document.getElementById('remove_bengali').checked = data.remove_bengali !== false;
-                    document.getElementById('bold_first_line').checked = data.bold_first_line !== false;
+                // Fetch Global Config
+                const gRes = await fetch(`${FIREBASE_BASE}/global_config.json`);
+                const gData = await gRes.json() || {};
+                document.getElementById('force_channel').value = gData.force_channel || "";
+                document.getElementById('global_blocked_words').value = gData.global_blocked_words || "";
+
+                // Today stats
+                const today = new Date().toISOString().split('T')[0];
+                const stats = gData.daily_stats || {};
+                document.getElementById('posts_today').innerText = stats[today] || 0;
+                
+                let totalPosts = 0;
+                Object.values(stats).forEach(v => totalPosts += v);
+                document.getElementById('total_posts').innerText = totalPosts;
+
+                // Fetch Users
+                const uRes = await fetch(`${FIREBASE_BASE}/users.json`);
+                const users = await uRes.json() || {};
+                const uKeys = Object.keys(users);
+                document.getElementById('total_users').innerText = uKeys.length;
+
+                let tableHtml = "";
+                for(let uid of uKeys) {
+                    const u = users[uid];
+                    const isBanned = u.is_banned === true;
+                    tableHtml += `<tr>
+                        <td><b>${uid}</b><br><small>${u.username ? '@'+u.username : ''}</small></td>
+                        <td>${u.target_channel || 'Not Connected'}</td>
+                        <td><span style="color: ${isBanned ? '#ef4444' : '#22c55e'}">${isBanned ? 'Banned' : 'Active'}</span></td>
+                        <td>
+                            <button class="${isBanned ? 'unban-btn' : 'ban-btn'}" onclick="toggleBan('${uid}', ${!isBanned})">
+                                ${isBanned ? 'Unban' : 'Ban'}
+                            </button>
+                        </td>
+                    </tr>`;
                 }
+                document.getElementById('users_table').innerHTML = tableHtml || "<tr><td colspan='4'>No users registered yet.</td></tr>";
+
+                // Fetch Logs
+                const lRes = await fetch(`${FIREBASE_BASE}/post_logs.json`);
+                const logs = await lRes.json() || {};
+                const logList = Object.values(logs).reverse().slice(0, 30);
+                let logHtml = "";
+                logList.forEach(l => {
+                    logHtml += `<div class="log-item"><b>[${l.time}]</b> User: <code>${l.user}</code> posted to <code>${l.channel}</code>: <i>${l.title}</i></div>`;
+                });
+                document.getElementById('logs_container').innerHTML = logHtml || "No recent activity.";
+
             } catch(e) {
                 console.error(e);
             }
         }
 
-        async function saveSettings() {
-            const statusDiv = document.getElementById('status');
-            const pin = document.getElementById('pin').value;
-            
-            statusDiv.innerHTML = "Saving...";
-            statusDiv.className = "status";
-
-            try {
-                const res = await fetch(FIREBASE_URL);
-                const currentData = await res.json();
-                const actualPin = (currentData && currentData.admin_pin) ? currentData.admin_pin : "1234";
-
-                if(pin !== actualPin) {
-                    statusDiv.innerHTML = "❌ Invalid PIN! Default PIN is 1234";
-                    statusDiv.className = "status error";
-                    return;
-                }
-
-                const updatedData = {
-                    ...currentData,
-                    target_channel: document.getElementById('target_channel').value.trim(),
-                    channel_tag: document.getElementById('channel_tag').value.trim(),
-                    remove_emojis: document.getElementById('remove_emojis').value,
-                    footer_text: document.getElementById('footer_text').value,
-                    remove_bengali: document.getElementById('remove_bengali').checked,
-                    bold_first_line: document.getElementById('bold_first_line').checked
-                };
-
-                await fetch(FIREBASE_URL, {
-                    method: 'PUT',
-                    body: JSON.stringify(updatedData)
-                });
-
-                statusDiv.innerHTML = "✅ Settings saved successfully to Firebase!";
-                statusDiv.className = "status success";
-            } catch(e) {
-                statusDiv.innerHTML = "❌ Error saving: " + e.message;
-                statusDiv.className = "status error";
+        async function saveGlobalConfig() {
+            const pin = document.getElementById('admin_pin').value;
+            const gRes = await fetch(`${FIREBASE_BASE}/global_config.json`);
+            const gData = await gRes.json() || {};
+            if(pin !== (gData.admin_pin || "1234")) {
+                alert("❌ Invalid Admin PIN!");
+                return;
             }
+
+            gData.force_channel = document.getElementById('force_channel').value.trim();
+            gData.global_blocked_words = document.getElementById('global_blocked_words').value.trim();
+
+            await fetch(`${FIREBASE_BASE}/global_config.json`, {
+                method: 'PUT',
+                body: JSON.stringify(gData)
+            });
+            alert("✅ Global Settings Saved!");
         }
-        window.onload = loadSettings;
+
+        async function toggleBan(uid, banStatus) {
+            const pin = document.getElementById('admin_pin').value;
+            const gRes = await fetch(`${FIREBASE_BASE}/global_config.json`);
+            const gData = await gRes.json() || {};
+            if(pin !== (gData.admin_pin || "1234")) {
+                alert("❌ Invalid PIN!");
+                return;
+            }
+
+            await fetch(`${FIREBASE_BASE}/users/${uid}/is_banned.json`, {
+                method: 'PUT',
+                body: JSON.stringify(banStatus)
+            });
+            loadDashboard();
+        }
+
+        window.onload = loadDashboard;
+        setInterval(loadDashboard, 15000); // auto-refresh every 15s
     </script>
 </body>
 </html>
@@ -190,112 +263,299 @@ def run_web_server():
 
 threading.Thread(target=run_web_server, daemon=True).start()
 
-# --- Caption Cleaner with Firebase Settings ---
-def clean_caption(text):
-    s = get_settings()
-    footer = s.get("footer_text", "⌲ @PhProMod\nShare It With Your Friends 👥")
-    if not text:
-        return footer
+# --- Telegram Bot Engine ---
+bot = Client("ph_session", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
 
-    # Emojis remove from Firebase
-    emojis_str = s.get("remove_emojis", "")
-    for emo in emojis_str.split(","):
+# Helper: Check Force Subscription
+async def check_force_sub(client, user_id):
+    cfg = db_get("global_config")
+    channel = cfg.get("force_channel", "").strip()
+    if not channel:
+        return True
+    try:
+        member = await client.get_chat_member(channel, user_id)
+        if member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER]:
+            return True
+        return False
+    except UserNotParticipant:
+        return False
+    except Exception as e:
+        return True # In case channel is invalid or bot not in force channel
+
+# Language Filter Regex Table
+LANG_REGEX = {
+    "bengali": r'[\u0980-\u09FF]+',
+    "arabic": r'[\u0600-\u06FF]+',
+    "hindi": r'[\u0900-\u097F]+',
+    "urdu": r'[\u0600-\u06FF\uFB50-\uFDFF\uFE70-\uFEFF]+',
+    "russian": r'[\u0400-\u04FF]+'
+}
+
+def clean_post_text(text, user_settings, global_settings):
+    if not text:
+        text = ""
+
+    # 1. Global Blocked Words filter
+    global_blocked = global_settings.get("global_blocked_words", "")
+    for word in global_blocked.split(","):
+        w = word.strip()
+        if w and re.search(r'\b' + re.escape(w) + r'\b', text, re.IGNORECASE):
+            return None # Cancel post if global blacklisted word found
+
+    # 2. User Blocked Words
+    user_blocked = user_settings.get("blocked_words", "")
+    for word in user_blocked.split(","):
+        w = word.strip()
+        if w:
+            text = re.sub(re.escape(w), '', text, flags=re.IGNORECASE)
+
+    # 3. User Target Language Removal
+    target_langs = user_settings.get("remove_languages", "bengali")
+    for lang in target_langs.split(","):
+        lang = lang.strip().lower()
+        if lang in LANG_REGEX:
+            text = re.sub(LANG_REGEX[lang], '', text)
+
+    # 4. Remove unwanted symbols/emojis
+    emojis = user_settings.get("remove_emojis", "⌲, 💫")
+    for emo in emojis.split(","):
         emo = emo.strip()
         if emo:
             text = text.replace(emo, "")
 
-    # Bengali remove
-    if s.get("remove_bengali", True):
-        text = re.sub(r'[\u0980-\u09FF]+', '', text)
-
-    # Links & @username
+    # 5. Clean external links & usernames
     text = re.sub(r'https?://\S+|www\.\S+|t\.me/\S+', '', text)
     text = re.sub(r'@\w+', '', text)
     text = re.sub(r'Share It With Your Friends.*', '', text, flags=re.IGNORECASE)
 
+    # 6. Format lines & First Line Bold
     lines = [line.strip() for line in text.split("\n") if line.strip()]
+    footer = user_settings.get("footer_text", "")
+
     if not lines:
         return footer
 
-    # First line Bold
-    if s.get("bold_first_line", True):
+    if user_settings.get("bold_first_line", True):
         first_line = lines[0]
         first_line_clean = re.sub(r'^\*+|\*+$', '', first_line).strip()
-        first_line = f"**{first_line_clean}**"
-        lines[0] = first_line
+        lines[0] = f"**{first_line_clean}**"
 
-    if len(lines) > 1:
-        formatted_caption = f"{lines[0]}\n\n" + "\n".join(lines[1:]) + f"\n\n{footer}"
-    else:
-        formatted_caption = f"{lines[0]}\n\n{footer}"
+    body = f"{lines[0]}\n\n" + "\n".join(lines[1:]) if len(lines) > 1 else lines[0]
+    return f"{body}\n\n{footer}".strip() if footer else body.strip()
 
-    return formatted_caption
-
-def clean_filename(original_name):
-    s = get_settings()
-    tag = s.get("channel_tag", "@PhProMod")
+def clean_app_filename(original_name, channel_tag):
     if not original_name:
-        original_name = "app.apk"
+        original_name = "application.apk"
     base, ext = os.path.splitext(original_name)
     base_clean = re.sub(r'@\w+', '', base)
     base_clean = re.sub(r'\[.*?\]|\(.*?\)', '', base_clean)
     base_clean = re.sub(r'[\s\-_]+$', '', base_clean).strip()
     base_clean = " ".join(base_clean.split())
     if not base_clean:
-        base_clean = "File"
-    return f"{base_clean} {tag}{ext}"
+        base_clean = "App"
+    return f"{base_clean} {channel_tag}{ext}" if channel_tag else f"{base_clean}{ext}"
 
-bot = Client("ph_session", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
+# --- Bot Commands ---
 
 @bot.on_message(filters.command("start"))
-async def start_cmd(client, message):
-    await message.reply_text("👋 Hello! Bot connected with Firebase Realtime Dashboard.")
+async def start_handler(client, message):
+    user_id = str(message.from_user.id)
+    username = message.from_user.username or ""
 
+    # Register User in DB
+    u_data = db_get(f"users/{user_id}")
+    if not u_data:
+        db_put(f"users/{user_id}", {
+            "username": username,
+            "target_channel": "",
+            "channel_tag": "@MyChannel",
+            "footer_text": "⌲ @MyChannel\nShare with friends 👥",
+            "remove_emojis": "⌲, 💫",
+            "remove_languages": "bengali",
+            "blocked_words": "",
+            "bold_first_line": True,
+            "is_banned": False
+        })
+
+    # Check Ban Status
+    if u_data.get("is_banned", False):
+        await message.reply_text("🚫 You are banned from using this bot by the administrator.")
+        return
+
+    # Check Force Sub
+    is_subbed = await check_force_sub(client, message.from_user.id)
+    if not is_subbed:
+        cfg = db_get("global_config")
+        ch = cfg.get("force_channel", "@PhProMod")
+        btn = InlineKeyboardMarkup([[InlineKeyboardButton("📢 Join Our Channel", url=f"https://t.me/{ch.replace('@','')}")],
+                                    [InlineKeyboardButton("🔄 Verify & Refresh", callback_data="check_sub")]])
+        await message.reply_text(f"⚠️ **Access Denied!**\n\nYou must join our official channel **{ch}** to use this bot.", reply_markup=btn)
+        return
+
+    # Welcome Menu
+    msg = (
+        "👋 **Welcome to AutoPost SaaS Manager!**\n\n"
+        "You can use this bot to auto-post, rename files, and clean foreign links for your own Telegram channel.\n\n"
+        "⚙️ **Commands:**\n"
+        "• `/connect` - Connect & verify your channel\n"
+        "• `/settings` - Set footer text, tags, and languages to remove\n"
+        "• `/status` - Check current connection status"
+    )
+    await message.reply_text(msg)
+
+@bot.on_callback_query(filters.regex("check_sub"))
+async def sub_callback(client, callback_query):
+    is_subbed = await check_force_sub(client, callback_query.from_user.id)
+    if is_subbed:
+        await callback_query.message.edit_text("✅ **Subscription verified!** Now send `/start` to begin.")
+    else:
+        await callback_query.answer("❌ You haven't joined the channel yet!", show_alert=True)
+
+# Step 1: Channel Connect Command
+@bot.on_message(filters.command("connect"))
+async def connect_cmd(client, message):
+    text = (
+        "🔗 **How to connect your channel:**\n\n"
+        "1. Add this bot to your channel as an **Administrator** with **Post Messages** permission.\n"
+        "2. Forward ANY message from your channel to this bot right now.\n\n"
+        "The bot will verify the permissions and lock your channel automatically!"
+    )
+    await message.reply_text(text)
+
+# Step 2: Settings Command
+@bot.on_message(filters.command("settings"))
+async def settings_cmd(client, message):
+    user_id = str(message.from_user.id)
+    u_data = db_get(f"users/{user_id}")
+    
+    help_text = (
+        "🛠 **Customize Your Formatting:**\n\n"
+        "Send commands to change your preferences:\n"
+        "• `/settag @YourTag` -> Set suffix name on files\n"
+        "• `/setfooter Your custom footer text` -> Set post footer\n"
+        "• `/remlang bengali,hindi` -> Languages to wipe out\n"
+        "• `/blockwords word1,word2` -> Custom words to delete"
+    )
+    await message.reply_text(help_text)
+
+@bot.on_message(filters.command("settag"))
+async def settag_cmd(client, message):
+    tag = message.text.split(maxsplit=1)[1] if len(message.text.split()) > 1 else ""
+    if not tag:
+        await message.reply_text("Usage: `/settag @YourChannel`")
+        return
+    db_put(f"users/{message.from_user.id}/channel_tag", tag)
+    await message.reply_text(f"✅ Suffix tag set to: `{tag}`")
+
+@bot.on_message(filters.command("setfooter"))
+async def setfooter_cmd(client, message):
+    footer = message.text.split(maxsplit=1)[1] if len(message.text.split()) > 1 else ""
+    db_put(f"users/{message.from_user.id}/footer_text", footer)
+    await message.reply_text("✅ Footer text updated!")
+
+@bot.on_message(filters.command("remlang"))
+async def remlang_cmd(client, message):
+    langs = message.text.split(maxsplit=1)[1] if len(message.text.split()) > 1 else ""
+    db_put(f"users/{message.from_user.id}/remove_languages", langs)
+    await message.reply_text(f"✅ Language filter set to: `{langs}` (Supported: bengali, hindi, arabic, urdu, russian)")
+
+# Forward Handler & Forward Processing
 @bot.on_message(filters.private)
-async def process_forwarded_post(client, message):
-    s = get_settings()
-    target_channel = int(s.get("target_channel", -1004308752538))
-    status = await message.reply_text("⏳ Processing post with Firebase rules...")
+async def handle_user_posts(client, message):
+    user_id = str(message.from_user.id)
+    u_data = db_get(f"users/{user_id}")
+    g_data = db_get("global_config")
+
+    # 1. Ban Check
+    if u_data.get("is_banned", False):
+        await message.reply_text("🚫 You are banned from using this service.")
+        return
+
+    # 2. Force Sub Check
+    is_subbed = await check_force_sub(client, message.from_user.id)
+    if not is_subbed:
+        await message.reply_text("⚠️ Unsubscribed detected! You must be a member of our channel to use the bot. Run `/start`.")
+        return
+
+    # 3. Channel Verification if user forwarded from their channel
+    if message.forward_from_chat:
+        f_chat = message.forward_from_chat
+        try:
+            # Test send permission
+            test_msg = await client.send_message(f_chat.id, "🤖 **AutoPost Manager connected successfully to this channel!**")
+            db_put(f"users/{user_id}/target_channel", f_chat.id)
+            await message.reply_text(f"🎉 **Channel Verified:** '{f_chat.title}' (ID: `{f_chat.id}`) is now connected!\n\nNow simply forward any posts, APKs, or videos to post automatically!")
+            return
+        except Exception as e:
+            await message.reply_text(f"❌ **Permission Error:** Make sure this bot is an **Admin with Post Messages** permission in **{f_chat.title}**!\nError: `{e}`")
+            return
+
+    # 4. Check if channel connected
+    target_channel = u_data.get("target_channel")
+    if not target_channel:
+        await message.reply_text("⚠️ You haven't connected your channel yet! Send `/connect` first.")
+        return
+
+    status = await message.reply_text("⏳ Processing post for your channel...")
 
     try:
+        tag = u_data.get("channel_tag", "")
+        today_date = datetime.utcnow().strftime("%Y-%m-%d")
+
+        # Process Media
         if message.video:
-            caption = clean_caption(message.caption)
-            new_name = clean_filename(message.video.file_name or "video.mp4")
-            await status.edit_text("📥 Downloading video...")
+            clean_cap = clean_post_text(message.caption, u_data, g_data)
+            if clean_cap is None:
+                await status.edit_text("❌ Post cancelled: Contains global blacklisted word.")
+                return
+            new_name = clean_app_filename(message.video.file_name or "video.mp4", tag)
             file_path = await message.download(file_name=new_name)
-            await status.edit_text("📤 Uploading video...")
-            await client.send_video(chat_id=target_channel, video=file_path, caption=caption, file_name=new_name, parse_mode=ParseMode.MARKDOWN, supports_streaming=True)
-            if os.path.exists(file_path):
-                os.remove(file_path)
+            await client.send_video(chat_id=target_channel, video=file_path, caption=clean_cap, file_name=new_name, parse_mode=ParseMode.MARKDOWN, supports_streaming=True)
+            if os.path.exists(file_path): os.remove(file_path)
 
         elif message.document:
-            caption = clean_caption(message.caption)
-            new_name = clean_filename(message.document.file_name)
-            await status.edit_text("📥 Downloading APK/File...")
+            clean_cap = clean_post_text(message.caption, u_data, g_data)
+            if clean_cap is None:
+                await status.edit_text("❌ Post cancelled: Contains global blacklisted word.")
+                return
+            new_name = clean_app_filename(message.document.file_name, tag)
             file_path = await message.download(file_name=new_name)
-            await status.edit_text("📤 Uploading APK/File...")
-            await client.send_document(chat_id=target_channel, document=file_path, caption=caption, file_name=new_name, parse_mode=ParseMode.MARKDOWN)
-            if os.path.exists(file_path):
-                os.remove(file_path)
+            await client.send_document(chat_id=target_channel, document=file_path, caption=clean_cap, file_name=new_name, parse_mode=ParseMode.MARKDOWN)
+            if os.path.exists(file_path): os.remove(file_path)
 
         elif message.photo:
-            caption = clean_caption(message.caption)
-            await status.edit_text("📤 Posting photo...")
-            await client.send_photo(chat_id=target_channel, photo=message.photo.file_id, caption=caption, parse_mode=ParseMode.MARKDOWN)
+            clean_cap = clean_post_text(message.caption, u_data, g_data)
+            if clean_cap is None:
+                await status.edit_text("❌ Post cancelled: Contains global blacklisted word.")
+                return
+            await client.send_photo(chat_id=target_channel, photo=message.photo.file_id, caption=clean_cap, parse_mode=ParseMode.MARKDOWN)
 
         elif message.text:
-            text = clean_caption(message.text)
-            await status.edit_text("📤 Posting text...")
-            await client.send_message(chat_id=target_channel, text=text, parse_mode=ParseMode.MARKDOWN)
+            clean_cap = clean_post_text(message.text, u_data, g_data)
+            if clean_cap is None:
+                await status.edit_text("❌ Post cancelled: Contains global blacklisted word.")
+                return
+            await client.send_message(chat_id=target_channel, text=clean_cap, parse_mode=ParseMode.MARKDOWN)
 
-        await status.edit_text("✅ Successfully posted using Firebase settings!")
+        await status.edit_text("✅ Posted successfully to your connected channel!")
+
+        # Update Analytics in Firebase
+        db_post("post_logs", {
+            "time": datetime.utcnow().strftime("%H:%M:%S"),
+            "user": user_id,
+            "channel": target_channel,
+            "title": (message.caption or message.text or "Media")[:30] + "..."
+        })
+        curr_count = db_get(f"global_config/daily_stats/{today_date}")
+        new_count = (curr_count if isinstance(curr_count, int) else 0) + 1
+        db_put(f"global_config/daily_stats/{today_date}", new_count)
 
     except Exception as e:
-        await status.edit_text(f"❌ Failed: {str(e)}")
+        await status.edit_text(f"❌ Failed to post: {e}")
 
 async def main():
     await bot.start()
-    print(">>> Bot LIVE with Firebase Dashboard! <<<")
+    print(">>> Multi-User SaaS Bot is RUNNING! <<<")
     await idle()
     await bot.stop()
 
