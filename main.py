@@ -3,134 +3,223 @@ import re
 import asyncio
 import threading
 import json
-import time
 from datetime import datetime
 import requests
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# Event Loop setup for Cloud Hosting
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
 
 from pyrogram import Client, filters, idle
 from pyrogram.enums import ParseMode, ChatMemberStatus
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from pyrogram.errors import UserNotParticipant
 
-# --- Bot Credentials ---
 API_ID = 34563277
 API_HASH = "7cc2cab7ad6241204f83c0a7fe52e5df"
 BOT_TOKEN = "9243394920:AAGg8P8oWdJOETRt6yBvBhDEJTnkrEMKNlM"
+FIREBASE_BASE = "https://autopost-manager-c91ed-default-rtdb.firebaseio.com"
+RENDER_URL = "https://autopost-manager-1.onrender.com"
 
-# Super Admin Telegram ID (আপনার পার্সোনাল টেলিগ্রাম আইডি)
-SUPER_ADMIN_ID = 34563277 # এখানে আপনার টেলিগ্রামের নিজস্ব ইউজার আইডি দিতে পারেন
-
-# Firebase URL
-FIREBASE_BASE_URL = "https://autopost-manager-c91ed-default-rtdb.firebaseio.com"
-
-# --- Firebase Helper Functions ---
-def db_get(endpoint):
+# --- Firebase API Helpers ---
+def db_get(path):
     try:
-        r = requests.get(f"{FIREBASE_BASE_URL}/{endpoint}.json", timeout=5)
+        r = requests.get(f"{FIREBASE_BASE}/{path}.json", timeout=5)
         return r.json() or {}
     except:
         return {}
 
-def db_put(endpoint, data):
+def db_put(path, data):
     try:
-        requests.put(f"{FIREBASE_BASE_URL}/{endpoint}.json", json=data, timeout=5)
+        requests.put(f"{FIREBASE_BASE}/{path}.json", json=data, timeout=5)
     except:
         pass
 
-def db_post(endpoint, data):
+def db_post(path, data):
     try:
-        requests.post(f"{FIREBASE_BASE_URL}/{endpoint}.json", json=data, timeout=5)
+        requests.post(f"{FIREBASE_BASE}/{path}.json", json=data, timeout=5)
     except:
         pass
 
-# Ensure Global Config exists
-global_cfg = db_get("global_config")
-if not global_cfg:
+# Ensure Global Config
+g_cfg = db_get("global_config")
+if not g_cfg:
     db_put("global_config", {
         "force_channel": "@PhProMod",
-        "global_blocked_words": "scam, fraud, 18+, betting",
+        "global_blocked_words": "scam, fraud, 18+",
         "admin_pin": "1234",
         "daily_stats": {}
     })
 
-# --- Web Server & Super Admin Dashboard ---
-DASHBOARD_HTML = """<!DOCTYPE html>
+# ==========================================
+# 1. USER TELEGRAM MINI APP (HTML/JS)
+# ==========================================
+USER_MINIAPP_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SaaS Master Admin Panel</title>
+    <title>Channel Settings</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0b0f19; color: #f3f4f6; margin: 0; padding: 15px; }
-        .container { max-width: 900px; margin: auto; }
-        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1f2937; padding-bottom: 15px; }
-        h1 { font-size: 20px; color: #38bdf8; margin: 0; }
-        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin: 20px 0; }
-        .stat-card { background: #111827; padding: 16px; border-radius: 10px; border: 1px solid #1f2937; text-align: center; }
-        .stat-num { font-size: 26px; font-weight: bold; color: #38bdf8; margin-top: 5px; }
-        .card { background: #111827; padding: 20px; border-radius: 10px; border: 1px solid #1f2937; margin-bottom: 20px; }
+        body { font-family: sans-serif; background: var(--tg-theme-bg-color, #121824); color: var(--tg-theme-text-color, #fff); margin: 0; padding: 16px; }
+        .card { background: var(--tg-theme-secondary-bg-color, #1e293b); border-radius: 12px; padding: 18px; margin-bottom: 15px; box-shadow: 0 4px 10px rgba(0,0,0,0.3); }
+        h3 { margin-top: 0; color: #38bdf8; font-size: 16px; border-bottom: 1px solid #334155; padding-bottom: 8px; }
+        label { display: block; font-size: 13px; color: #94a3b8; margin-top: 10px; font-weight: bold; }
+        input[type="text"], textarea, select { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #fff; margin-top: 5px; box-sizing: border-box; font-size: 14px; }
+        textarea { height: 70px; resize: none; }
+        .note { font-size: 12px; color: #38bdf8; margin-top: 4px; }
+        button { width: 100%; background: #0284c7; color: #fff; padding: 14px; border: none; border-radius: 10px; font-size: 16px; font-weight: bold; cursor: pointer; margin-top: 15px; }
+        .alert { text-align: center; margin-top: 10px; font-size: 14px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h3>⚙️ Setup Your Channel</h3>
+        
+        <label>Your Target Channel ID (e.g. -100xxxxxxxxxx):</label>
+        <input type="text" id="target_channel" placeholder="-1001234567890">
+        <div class="note">💡 Bot must be an Admin in your channel with 'Post Messages' permission.</div>
+
+        <label>File Name Suffix Tag:</label>
+        <input type="text" id="channel_tag" placeholder="@YourChannel">
+
+        <label>Custom Post Footer Text:</label>
+        <textarea id="footer_text" placeholder="⌲ @YourChannel&#10;Share with friends 👥"></textarea>
+
+        <label>Language to Wipe Out / Remove:</label>
+        <select id="remove_languages">
+            <option value="bengali">Bengali (বাংলা)</option>
+            <option value="hindi">Hindi (हिंदी)</option>
+            <option value="arabic">Arabic (العربية)</option>
+            <option value="urdu">Urdu (اردو)</option>
+            <option value="all">Bengali + Hindi + Arabic</option>
+            <option value="none">None (Keep All Languages)</option>
+        </select>
+
+        <label>Custom Words to Remove (comma-separated):</label>
+        <input type="text" id="blocked_words" placeholder="badword1, @foreign_tag">
+
+        <button onclick="saveUserSettings()">💾 Save Configuration</button>
+        <div id="alert" class="alert"></div>
+    </div>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.expand();
+        const user = tg.initDataUnsafe?.user || { id: "demo_user", first_name: "User" };
+        const FIREBASE = "https://autopost-manager-c91ed-default-rtdb.firebaseio.com";
+
+        async function loadData() {
+            try {
+                const res = await fetch(`${FIREBASE}/users/${user.id}.json`);
+                const data = await res.json();
+                if (data) {
+                    document.getElementById('target_channel').value = data.target_channel || "";
+                    document.getElementById('channel_tag').value = data.channel_tag || "";
+                    document.getElementById('footer_text').value = data.footer_text || "";
+                    if(data.remove_languages) document.getElementById('remove_languages').value = data.remove_languages;
+                    document.getElementById('blocked_words').value = data.blocked_words || "";
+                }
+            } catch(e) {}
+        }
+
+        async function saveUserSettings() {
+            const btn = document.getElementById('alert');
+            btn.style.color = '#38bdf8';
+            btn.innerText = "Saving settings...";
+
+            const payload = {
+                target_channel: document.getElementById('target_channel').value.trim(),
+                channel_tag: document.getElementById('channel_tag').value.trim(),
+                footer_text: document.getElementById('footer_text').value,
+                remove_languages: document.getElementById('remove_languages').value,
+                blocked_words: document.getElementById('blocked_words').value,
+                username: user.username || "",
+                first_name: user.first_name || ""
+            };
+
+            await fetch(`${FIREBASE}/users/${user.id}.json`, {
+                method: 'PATCH',
+                body: JSON.stringify(payload)
+            });
+
+            btn.style.color = '#4ade80';
+            btn.innerText = "✅ Settings updated successfully!";
+            setTimeout(() => { tg.close(); }, 1200);
+        }
+        window.onload = loadData;
+    </script>
+</body>
+</html>
+"""
+
+# ==========================================
+# 2. OWNER MASTER ADMIN PANEL (HTML/JS)
+# ==========================================
+OWNER_ADMIN_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Master Admin Dashboard</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #080c14; color: #f8fafc; margin: 0; padding: 20px; }
+        .container { max-width: 1100px; margin: auto; }
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; padding-bottom: 15px; }
+        h1 { font-size: 22px; color: #38bdf8; margin: 0; }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }
+        .stat-card { background: #0f172a; padding: 18px; border-radius: 12px; border: 1px solid #1e293b; text-align: center; }
+        .stat-num { font-size: 28px; font-weight: bold; color: #38bdf8; margin-top: 5px; }
+        .card { background: #0f172a; padding: 20px; border-radius: 12px; border: 1px solid #1e293b; margin-bottom: 20px; }
         h3 { margin-top: 0; color: #93c5fd; font-size: 16px; }
-        label { font-size: 13px; color: #9ca3af; display: block; margin-top: 10px; }
-        input[type="text"], input[type="password"], textarea { width: 100%; padding: 10px; background: #1f2937; border: 1px solid #374151; border-radius: 6px; color: #fff; margin-top: 5px; box-sizing: border-box; }
-        button { background: #0284c7; color: #fff; border: none; padding: 10px 16px; border-radius: 6px; font-weight: bold; cursor: pointer; margin-top: 15px; }
+        input[type="text"], input[type="password"], textarea { width: 100%; padding: 10px; background: #1e293b; border: 1px solid #334155; border-radius: 8px; color: #fff; margin-top: 6px; box-sizing: border-box; }
+        button { background: #0284c7; color: #fff; border: none; padding: 10px 16px; border-radius: 8px; font-weight: bold; cursor: pointer; }
         button:hover { background: #0369a1; }
-        .ban-btn { background: #dc2626; padding: 5px 10px; font-size: 12px; }
-        .unban-btn { background: #16a34a; padding: 5px 10px; font-size: 12px; }
+        .ban-btn { background: #ef4444; padding: 6px 12px; border-radius: 6px; }
+        .unban-btn { background: #22c55e; padding: 6px 12px; border-radius: 6px; }
         table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 13px; }
-        th, td { text-align: left; padding: 10px; border-bottom: 1px solid #1f2937; }
-        th { color: #9ca3af; }
-        .logs-box { max-height: 250px; overflow-y: auto; font-family: monospace; font-size: 12px; background: #030712; padding: 10px; border-radius: 6px; }
-        .log-item { padding: 4px 0; border-bottom: 1px solid #111827; }
+        th, td { text-align: left; padding: 12px; border-bottom: 1px solid #1e293b; }
+        .avatar { width: 42px; height: 42px; border-radius: 50%; object-fit: cover; background: #334155; }
+        .user-cell { display: flex; align-items: center; gap: 10px; }
+        .logs-box { max-height: 300px; overflow-y: auto; font-family: monospace; font-size: 12px; background: #030712; padding: 12px; border-radius: 8px; border: 1px solid #1e293b; }
+        .log-item { padding: 8px; border-bottom: 1px solid #0f172a; display: flex; flex-direction: column; gap: 3px; }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>🚀 AutoPost Manager SaaS Control</h1>
+            <h1>👑 Master SaaS Admin Control</h1>
             <div>
-                <input type="password" id="admin_pin" placeholder="PIN (Default: 1234)" style="width: 120px; padding: 6px;">
+                <input type="password" id="admin_pin" placeholder="PIN (Default: 1234)" style="width: 140px; padding: 8px; margin: 0;">
             </div>
         </div>
 
         <div class="stats-grid">
-            <div class="stat-card">
-                <div>Total Users</div>
-                <div class="stat-num" id="total_users">0</div>
-            </div>
-            <div class="stat-card">
-                <div>Posts Today</div>
-                <div class="stat-num" id="posts_today">0</div>
-            </div>
-            <div class="stat-card">
-                <div>Total Lifetime Posts</div>
-                <div class="stat-num" id="total_posts">0</div>
-            </div>
+            <div class="stat-card"><div>Active Users</div><div class="stat-num" id="total_users">0</div></div>
+            <div class="stat-card"><div>Posts Today</div><div class="stat-num" id="posts_today">0</div></div>
+            <div class="stat-card"><div>Lifetime Posts</div><div class="stat-num" id="total_posts">0</div></div>
         </div>
 
         <!-- Global Settings -->
         <div class="card">
-            <h3>🌐 Global Platform Settings</h3>
-            <label>Mandatory Join Channel (Force Sub):</label>
-            <input type="text" id="force_channel" placeholder="@ChannelUsername">
+            <h3>🌐 Global Platform Policies</h3>
+            <label>Mandatory Join Channel (Force Subscription):</label>
+            <input type="text" id="force_channel" placeholder="@PhProMod">
 
-            <label>Global Blocked Words (Posts containing these will be deleted/removed, comma-separated):</label>
-            <textarea id="global_blocked_words" placeholder="badword1, scam, link"></textarea>
+            <label style="margin-top: 12px; display:block;">Global Prohibited Words (Posts containing these will be aborted):</label>
+            <textarea id="global_blocked_words" placeholder="scam, 18+, betting"></textarea>
 
-            <button onclick="saveGlobalConfig()">Save Global Settings</button>
+            <button style="margin-top: 12px;" onclick="saveGlobal()">💾 Save Global Config</button>
         </div>
 
-        <!-- Users Management -->
+        <!-- Registered Users with Profile Pictures -->
         <div class="card">
-            <h3>👥 Registered Users Management</h3>
+            <h3>👥 Registered Users Overview</h3>
             <table>
                 <thead>
                     <tr>
-                        <th>User ID</th>
+                        <th>User Profile</th>
                         <th>Target Channel</th>
                         <th>Status</th>
                         <th>Action</th>
@@ -140,422 +229,369 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             </table>
         </div>
 
-        <!-- Live Activity Logs -->
+        <!-- Live Post Stream (Realtime Interception) -->
         <div class="card">
-            <h3>📜 Live Posting Logs (Recent Activities)</h3>
-            <div class="logs-box" id="logs_container">Loading activities...</div>
+            <h3>📡 Live User Forward Stream (Inspect what users are posting)</h3>
+            <div class="logs-box" id="logs_container">Loading stream...</div>
         </div>
     </div>
 
     <script>
-        const FIREBASE_BASE = "https://autopost-manager-c91ed-default-rtdb.firebaseio.com";
+        const FIREBASE = "https://autopost-manager-c91ed-default-rtdb.firebaseio.com";
 
-        async function loadDashboard() {
+        async function loadAdmin() {
             try {
-                // Fetch Global Config
-                const gRes = await fetch(`${FIREBASE_BASE}/global_config.json`);
+                const gRes = await fetch(`${FIREBASE}/global_config.json`);
                 const gData = await gRes.json() || {};
                 document.getElementById('force_channel').value = gData.force_channel || "";
                 document.getElementById('global_blocked_words').value = gData.global_blocked_words || "";
 
-                // Today stats
                 const today = new Date().toISOString().split('T')[0];
                 const stats = gData.daily_stats || {};
                 document.getElementById('posts_today').innerText = stats[today] || 0;
-                
-                let totalPosts = 0;
-                Object.values(stats).forEach(v => totalPosts += v);
-                document.getElementById('total_posts').innerText = totalPosts;
+                let tot = 0;
+                Object.values(stats).forEach(c => tot += c);
+                document.getElementById('total_posts').innerText = tot;
 
-                // Fetch Users
-                const uRes = await fetch(`${FIREBASE_BASE}/users.json`);
+                // Load Users
+                const uRes = await fetch(`${FIREBASE}/users.json`);
                 const users = await uRes.json() || {};
                 const uKeys = Object.keys(users);
                 document.getElementById('total_users').innerText = uKeys.length;
 
-                let tableHtml = "";
+                let uHtml = "";
                 for(let uid of uKeys) {
                     const u = users[uid];
                     const isBanned = u.is_banned === true;
-                    tableHtml += `<tr>
-                        <td><b>${uid}</b><br><small>${u.username ? '@'+u.username : ''}</small></td>
-                        <td>${u.target_channel || 'Not Connected'}</td>
-                        <td><span style="color: ${isBanned ? '#ef4444' : '#22c55e'}">${isBanned ? 'Banned' : 'Active'}</span></td>
+                    const photo = u.photo_url || "https://cdn-icons-png.flaticon.com/512/149/149071.png";
+                    uHtml += `<tr>
                         <td>
-                            <button class="${isBanned ? 'unban-btn' : 'ban-btn'}" onclick="toggleBan('${uid}', ${!isBanned})">
-                                ${isBanned ? 'Unban' : 'Ban'}
+                            <div class="user-cell">
+                                <img src="${photo}" class="avatar">
+                                <div>
+                                    <b>${u.first_name || 'User'}</b><br>
+                                    <small style="color:#94a3b8">@${u.username || 'NoUsername'} | ID: ${uid}</small>
+                                </div>
+                            </div>
+                        </td>
+                        <td><code>${u.target_channel || 'Not Connected'}</code></td>
+                        <td><span style="color:${isBanned?'#ef4444':'#22c55e'}; font-weight:bold;">${isBanned?'BANNED':'ACTIVE'}</span></td>
+                        <td>
+                            <button class="${isBanned?'unban-btn':'ban-btn'}" onclick="toggleBan('${uid}', ${!isBanned})">
+                                ${isBanned?'Unban':'Ban User'}
                             </button>
                         </td>
                     </tr>`;
                 }
-                document.getElementById('users_table').innerHTML = tableHtml || "<tr><td colspan='4'>No users registered yet.</td></tr>";
+                document.getElementById('users_table').innerHTML = uHtml || "<tr><td colspan='4'>No users found.</td></tr>";
 
-                // Fetch Logs
-                const lRes = await fetch(`${FIREBASE_BASE}/post_logs.json`);
+                // Load Logs
+                const lRes = await fetch(`${FIREBASE}/post_logs.json`);
                 const logs = await lRes.json() || {};
-                const logList = Object.values(logs).reverse().slice(0, 30);
+                const logArr = Object.values(logs).reverse().slice(0, 30);
                 let logHtml = "";
-                logList.forEach(l => {
-                    logHtml += `<div class="log-item"><b>[${l.time}]</b> User: <code>${l.user}</code> posted to <code>${l.channel}</code>: <i>${l.title}</i></div>`;
+                logArr.forEach(l => {
+                    logHtml += `<div class="log-item">
+                        <div><b>[${l.time}]</b> User: <b>${l.user_name}</b> (<code>${l.user_id}</code>) &rarr; Channel: <code>${l.channel}</code></div>
+                        <div style="color: #94a3b8;">Original: <i>${l.content}</i></div>
+                    </div>`;
                 });
                 document.getElementById('logs_container').innerHTML = logHtml || "No recent activity.";
 
-            } catch(e) {
-                console.error(e);
-            }
+            } catch(e) {}
         }
 
-        async function saveGlobalConfig() {
+        async function saveGlobal() {
             const pin = document.getElementById('admin_pin').value;
-            const gRes = await fetch(`${FIREBASE_BASE}/global_config.json`);
+            const gRes = await fetch(`${FIREBASE}/global_config.json`);
             const gData = await gRes.json() || {};
             if(pin !== (gData.admin_pin || "1234")) {
-                alert("❌ Invalid Admin PIN!");
+                alert("❌ Wrong Admin PIN!");
                 return;
             }
-
             gData.force_channel = document.getElementById('force_channel').value.trim();
             gData.global_blocked_words = document.getElementById('global_blocked_words').value.trim();
-
-            await fetch(`${FIREBASE_BASE}/global_config.json`, {
-                method: 'PUT',
-                body: JSON.stringify(gData)
-            });
-            alert("✅ Global Settings Saved!");
+            await fetch(`${FIREBASE}/global_config.json`, { method:'PUT', body:JSON.stringify(gData) });
+            alert("✅ Global rules saved!");
         }
 
         async function toggleBan(uid, banStatus) {
             const pin = document.getElementById('admin_pin').value;
-            const gRes = await fetch(`${FIREBASE_BASE}/global_config.json`);
+            const gRes = await fetch(`${FIREBASE}/global_config.json`);
             const gData = await gRes.json() || {};
             if(pin !== (gData.admin_pin || "1234")) {
-                alert("❌ Invalid PIN!");
+                alert("❌ Wrong PIN!");
                 return;
             }
-
-            await fetch(`${FIREBASE_BASE}/users/${uid}/is_banned.json`, {
-                method: 'PUT',
-                body: JSON.stringify(banStatus)
-            });
-            loadDashboard();
+            await fetch(`${FIREBASE}/users/${uid}/is_banned.json`, { method:'PUT', body:JSON.stringify(banStatus) });
+            loadAdmin();
         }
 
-        window.onload = loadDashboard;
-        setInterval(loadDashboard, 15000); // auto-refresh every 15s
+        window.onload = loadAdmin;
+        setInterval(loadAdmin, 15000);
     </script>
 </body>
 </html>
 """
 
-class WebHandler(BaseHTTPRequestHandler):
+# Route Handler for Server
+class MasterRouter(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.send_header("Content-type", "text/html; charset=utf-8")
         self.end_headers()
-        self.wfile.write(DASHBOARD_HTML.encode('utf-8'))
+        # Admin Panel URL: /admin
+        if self.path.startswith("/admin"):
+            self.wfile.write(OWNER_ADMIN_HTML.encode('utf-8'))
+        else:
+            # Root URL: Mini App for normal Telegram users
+            self.wfile.write(USER_MINIAPP_HTML.encode('utf-8'))
     def log_message(self, format, *args):
         return
 
-def run_web_server():
+def run_http():
     port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(("0.0.0.0", port), WebHandler)
-    server.serve_forever()
+    s = HTTPServer(("0.0.0.0", port), MasterRouter)
+    s.serve_forever()
 
-threading.Thread(target=run_web_server, daemon=True).start()
+threading.Thread(target=run_http, daemon=True).start()
 
 # --- Telegram Bot Engine ---
 bot = Client("ph_session", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
 
-# Helper: Check Force Subscription
 async def check_force_sub(client, user_id):
     cfg = db_get("global_config")
     channel = cfg.get("force_channel", "").strip()
-    if not channel:
-        return True
+    if not channel: return True
     try:
-        member = await client.get_chat_member(channel, user_id)
-        if member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER]:
-            return True
-        return False
+        m = await client.get_chat_member(channel, user_id)
+        return m.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER]
     except UserNotParticipant:
         return False
-    except Exception as e:
-        return True # In case channel is invalid or bot not in force channel
+    except:
+        return True
 
-# Language Filter Regex Table
-LANG_REGEX = {
+LANG_DICT = {
     "bengali": r'[\u0980-\u09FF]+',
-    "arabic": r'[\u0600-\u06FF]+',
     "hindi": r'[\u0900-\u097F]+',
+    "arabic": r'[\u0600-\u06FF]+',
     "urdu": r'[\u0600-\u06FF\uFB50-\uFDFF\uFE70-\uFEFF]+',
-    "russian": r'[\u0400-\u04FF]+'
+    "all": r'[\u0980-\u09FF\u0900-\u097F\u0600-\u06FF]+'
 }
 
-def clean_post_text(text, user_settings, global_settings):
-    if not text:
-        text = ""
+def clean_post_text(text, u_data, g_data):
+    if not text: text = ""
 
-    # 1. Global Blocked Words filter
-    global_blocked = global_settings.get("global_blocked_words", "")
-    for word in global_blocked.split(","):
+    # Global Blocked Words
+    g_blocked = g_data.get("global_blocked_words", "")
+    for word in g_blocked.split(","):
         w = word.strip()
         if w and re.search(r'\b' + re.escape(w) + r'\b', text, re.IGNORECASE):
-            return None # Cancel post if global blacklisted word found
+            return None
 
-    # 2. User Blocked Words
-    user_blocked = user_settings.get("blocked_words", "")
-    for word in user_blocked.split(","):
+    # User Blocked Words
+    u_blocked = u_data.get("blocked_words", "")
+    for word in u_blocked.split(","):
         w = word.strip()
-        if w:
-            text = re.sub(re.escape(w), '', text, flags=re.IGNORECASE)
+        if w: text = re.sub(re.escape(w), '', text, flags=re.IGNORECASE)
 
-    # 3. User Target Language Removal
-    target_langs = user_settings.get("remove_languages", "bengali")
-    for lang in target_langs.split(","):
-        lang = lang.strip().lower()
-        if lang in LANG_REGEX:
-            text = re.sub(LANG_REGEX[lang], '', text)
+    # Language Filter
+    target_lang = u_data.get("remove_languages", "bengali").lower()
+    if target_lang in LANG_DICT:
+        text = re.sub(LANG_DICT[target_lang], '', text)
 
-    # 4. Remove unwanted symbols/emojis
-    emojis = user_settings.get("remove_emojis", "⌲, 💫")
-    for emo in emojis.split(","):
-        emo = emo.strip()
-        if emo:
-            text = text.replace(emo, "")
-
-    # 5. Clean external links & usernames
+    # Emojis & Links
+    for emo in ["⌲", "💫"]:
+        text = text.replace(emo, "")
     text = re.sub(r'https?://\S+|www\.\S+|t\.me/\S+', '', text)
     text = re.sub(r'@\w+', '', text)
     text = re.sub(r'Share It With Your Friends.*', '', text, flags=re.IGNORECASE)
 
-    # 6. Format lines & First Line Bold
-    lines = [line.strip() for line in text.split("\n") if line.strip()]
-    footer = user_settings.get("footer_text", "")
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    footer = u_data.get("footer_text", "")
+    if not lines: return footer
 
-    if not lines:
-        return footer
-
-    if user_settings.get("bold_first_line", True):
-        first_line = lines[0]
-        first_line_clean = re.sub(r'^\*+|\*+$', '', first_line).strip()
-        lines[0] = f"**{first_line_clean}**"
-
+    # First line Bold
+    first_line = re.sub(r'^\*+|\*+$', '', lines[0]).strip()
+    lines[0] = f"**{first_line}**"
     body = f"{lines[0]}\n\n" + "\n".join(lines[1:]) if len(lines) > 1 else lines[0]
     return f"{body}\n\n{footer}".strip() if footer else body.strip()
 
-def clean_app_filename(original_name, channel_tag):
-    if not original_name:
-        original_name = "application.apk"
-    base, ext = os.path.splitext(original_name)
+def clean_app_filename(name, tag):
+    if not name: name = "app.apk"
+    base, ext = os.path.splitext(name)
     base_clean = re.sub(r'@\w+', '', base)
     base_clean = re.sub(r'\[.*?\]|\(.*?\)', '', base_clean)
     base_clean = re.sub(r'[\s\-_]+$', '', base_clean).strip()
     base_clean = " ".join(base_clean.split())
-    if not base_clean:
-        base_clean = "App"
-    return f"{base_clean} {channel_tag}{ext}" if channel_tag else f"{base_clean}{ext}"
+    if not base_clean: base_clean = "App"
+    return f"{base_clean} {tag}{ext}" if tag else f"{base_clean}{ext}"
 
-# --- Bot Commands ---
-
+# Start Command with Web App Button
 @bot.on_message(filters.command("start"))
 async def start_handler(client, message):
     user_id = str(message.from_user.id)
+    first_name = message.from_user.first_name or "User"
     username = message.from_user.username or ""
 
-    # Register User in DB
+    # Fetch User Profile Photo for Admin Panel
+    photo_url = ""
+    try:
+        photos = [p async for p in client.get_chat_photos(message.from_user.id, limit=1)]
+        if photos:
+            # Use public Telegram avatar proxy or placeholder
+            photo_url = f"https://t.me/i/userpic/320/{username}.jpg" if username else ""
+    except:
+        pass
+
     u_data = db_get(f"users/{user_id}")
     if not u_data:
         db_put(f"users/{user_id}", {
+            "first_name": first_name,
             "username": username,
+            "photo_url": photo_url,
             "target_channel": "",
             "channel_tag": "@MyChannel",
             "footer_text": "⌲ @MyChannel\nShare with friends 👥",
-            "remove_emojis": "⌲, 💫",
             "remove_languages": "bengali",
             "blocked_words": "",
-            "bold_first_line": True,
             "is_banned": False
         })
+    elif photo_url and not u_data.get("photo_url"):
+        db_put(f"users/{user_id}/photo_url", photo_url)
 
-    # Check Ban Status
     if u_data.get("is_banned", False):
-        await message.reply_text("🚫 You are banned from using this bot by the administrator.")
+        await message.reply_text("🚫 You are banned from using this bot.")
         return
 
     # Check Force Sub
-    is_subbed = await check_force_sub(client, message.from_user.id)
-    if not is_subbed:
+    subbed = await check_force_sub(client, message.from_user.id)
+    if not subbed:
         cfg = db_get("global_config")
         ch = cfg.get("force_channel", "@PhProMod")
-        btn = InlineKeyboardMarkup([[InlineKeyboardButton("📢 Join Our Channel", url=f"https://t.me/{ch.replace('@','')}")],
-                                    [InlineKeyboardButton("🔄 Verify & Refresh", callback_data="check_sub")]])
-        await message.reply_text(f"⚠️ **Access Denied!**\n\nYou must join our official channel **{ch}** to use this bot.", reply_markup=btn)
+        btn = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📢 Join Our Channel", url=f"https://t.me/{ch.replace('@','')}")],
+            [InlineKeyboardButton("🔄 Verify & Refresh", callback_data="verify_sub")]
+        ])
+        await message.reply_text(f"⚠️ **Access Denied!**\n\nYou must join **{ch}** to use this bot.", reply_markup=btn)
         return
 
-    # Welcome Menu
-    msg = (
-        "👋 **Welcome to AutoPost SaaS Manager!**\n\n"
-        "You can use this bot to auto-post, rename files, and clean foreign links for your own Telegram channel.\n\n"
-        "⚙️ **Commands:**\n"
-        "• `/connect` - Connect & verify your channel\n"
-        "• `/settings` - Set footer text, tags, and languages to remove\n"
-        "• `/status` - Check current connection status"
+    # Open Settings via Telegram Mini App
+    btn = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⚙️ Open Settings (Mini App)", web_app=WebAppInfo(url=RENDER_URL))],
+        [InlineKeyboardButton("📖 How to Connect Channel", callback_data="help_connect")]
+    ])
+    await message.reply_text(
+        f"👋 **Welcome, {first_name}!**\n\n"
+        "Click the button below to easily setup your channel, footer, and language filters without any commands!",
+        reply_markup=btn
     )
-    await message.reply_text(msg)
 
-@bot.on_callback_query(filters.regex("check_sub"))
-async def sub_callback(client, callback_query):
-    is_subbed = await check_force_sub(client, callback_query.from_user.id)
-    if is_subbed:
-        await callback_query.message.edit_text("✅ **Subscription verified!** Now send `/start` to begin.")
-    else:
-        await callback_query.answer("❌ You haven't joined the channel yet!", show_alert=True)
+@bot.on_callback_query()
+async def callback_gate(client, cb):
+    if cb.data == "verify_sub":
+        if await check_force_sub(client, cb.from_user.id):
+            await cb.message.edit_text("✅ Verified! Send `/start` to access.")
+        else:
+            await cb.answer("❌ You have not joined our channel yet!", show_alert=True)
+    elif cb.data == "help_connect":
+        await cb.message.reply_text(
+            "📌 **How to connect your channel:**\n\n"
+            "1. Add this bot as an **Administrator** in your channel with **Post Messages** permission.\n"
+            "2. Forward ANY message from your channel to this bot.\n"
+            "3. The bot will automatically verify and connect your channel!"
+        )
 
-# Step 1: Channel Connect Command
-@bot.on_message(filters.command("connect"))
-async def connect_cmd(client, message):
-    text = (
-        "🔗 **How to connect your channel:**\n\n"
-        "1. Add this bot to your channel as an **Administrator** with **Post Messages** permission.\n"
-        "2. Forward ANY message from your channel to this bot right now.\n\n"
-        "The bot will verify the permissions and lock your channel automatically!"
-    )
-    await message.reply_text(text)
-
-# Step 2: Settings Command
-@bot.on_message(filters.command("settings"))
-async def settings_cmd(client, message):
-    user_id = str(message.from_user.id)
-    u_data = db_get(f"users/{user_id}")
-    
-    help_text = (
-        "🛠 **Customize Your Formatting:**\n\n"
-        "Send commands to change your preferences:\n"
-        "• `/settag @YourTag` -> Set suffix name on files\n"
-        "• `/setfooter Your custom footer text` -> Set post footer\n"
-        "• `/remlang bengali,hindi` -> Languages to wipe out\n"
-        "• `/blockwords word1,word2` -> Custom words to delete"
-    )
-    await message.reply_text(help_text)
-
-@bot.on_message(filters.command("settag"))
-async def settag_cmd(client, message):
-    tag = message.text.split(maxsplit=1)[1] if len(message.text.split()) > 1 else ""
-    if not tag:
-        await message.reply_text("Usage: `/settag @YourChannel`")
-        return
-    db_put(f"users/{message.from_user.id}/channel_tag", tag)
-    await message.reply_text(f"✅ Suffix tag set to: `{tag}`")
-
-@bot.on_message(filters.command("setfooter"))
-async def setfooter_cmd(client, message):
-    footer = message.text.split(maxsplit=1)[1] if len(message.text.split()) > 1 else ""
-    db_put(f"users/{message.from_user.id}/footer_text", footer)
-    await message.reply_text("✅ Footer text updated!")
-
-@bot.on_message(filters.command("remlang"))
-async def remlang_cmd(client, message):
-    langs = message.text.split(maxsplit=1)[1] if len(message.text.split()) > 1 else ""
-    db_put(f"users/{message.from_user.id}/remove_languages", langs)
-    await message.reply_text(f"✅ Language filter set to: `{langs}` (Supported: bengali, hindi, arabic, urdu, russian)")
-
-# Forward Handler & Forward Processing
+# Message & Forward Processor
 @bot.on_message(filters.private)
-async def handle_user_posts(client, message):
+async def message_dispatcher(client, message):
     user_id = str(message.from_user.id)
     u_data = db_get(f"users/{user_id}")
     g_data = db_get("global_config")
 
-    # 1. Ban Check
     if u_data.get("is_banned", False):
         await message.reply_text("🚫 You are banned from using this service.")
         return
 
-    # 2. Force Sub Check
-    is_subbed = await check_force_sub(client, message.from_user.id)
-    if not is_subbed:
-        await message.reply_text("⚠️ Unsubscribed detected! You must be a member of our channel to use the bot. Run `/start`.")
+    if not await check_force_sub(client, message.from_user.id):
+        await message.reply_text("⚠️ You must join our channel to use this bot! Run `/start`.")
         return
 
-    # 3. Channel Verification if user forwarded from their channel
+    # Channel Auto-Detect via Forward
     if message.forward_from_chat:
         f_chat = message.forward_from_chat
         try:
-            # Test send permission
-            test_msg = await client.send_message(f_chat.id, "🤖 **AutoPost Manager connected successfully to this channel!**")
+            await client.send_message(f_chat.id, "🤖 **AutoPost Manager verified & connected to this channel!**")
             db_put(f"users/{user_id}/target_channel", f_chat.id)
-            await message.reply_text(f"🎉 **Channel Verified:** '{f_chat.title}' (ID: `{f_chat.id}`) is now connected!\n\nNow simply forward any posts, APKs, or videos to post automatically!")
+            await message.reply_text(f"🎉 **Channel Verified:** '{f_chat.title}' (`{f_chat.id}`) is successfully connected!")
             return
         except Exception as e:
-            await message.reply_text(f"❌ **Permission Error:** Make sure this bot is an **Admin with Post Messages** permission in **{f_chat.title}**!\nError: `{e}`")
+            await message.reply_text(f"❌ **Permission Failed:** Make sure bot is an Admin with Post Messages in '{f_chat.title}'!")
             return
 
-    # 4. Check if channel connected
     target_channel = u_data.get("target_channel")
     if not target_channel:
-        await message.reply_text("⚠️ You haven't connected your channel yet! Send `/connect` first.")
+        await message.reply_text("⚠️ Channel not connected yet! Forward a post from your channel or setup in the Mini App.")
         return
 
     status = await message.reply_text("⏳ Processing post for your channel...")
-
     try:
         tag = u_data.get("channel_tag", "")
-        today_date = datetime.utcnow().strftime("%Y-%m-%d")
+        today = datetime.utcnow().strftime("%Y-%m-%d")
 
-        # Process Media
         if message.video:
-            clean_cap = clean_post_text(message.caption, u_data, g_data)
-            if clean_cap is None:
-                await status.edit_text("❌ Post cancelled: Contains global blacklisted word.")
+            cap = clean_post_text(message.caption, u_data, g_data)
+            if cap is None:
+                await status.edit_text("❌ Post cancelled: Contains blacklisted word.")
                 return
             new_name = clean_app_filename(message.video.file_name or "video.mp4", tag)
-            file_path = await message.download(file_name=new_name)
-            await client.send_video(chat_id=target_channel, video=file_path, caption=clean_cap, file_name=new_name, parse_mode=ParseMode.MARKDOWN, supports_streaming=True)
-            if os.path.exists(file_path): os.remove(file_path)
+            fp = await message.download(file_name=new_name)
+            await client.send_video(chat_id=target_channel, video=fp, caption=cap, file_name=new_name, parse_mode=ParseMode.MARKDOWN, supports_streaming=True)
+            if os.path.exists(fp): os.remove(fp)
 
         elif message.document:
-            clean_cap = clean_post_text(message.caption, u_data, g_data)
-            if clean_cap is None:
-                await status.edit_text("❌ Post cancelled: Contains global blacklisted word.")
+            cap = clean_post_text(message.caption, u_data, g_data)
+            if cap is None:
+                await status.edit_text("❌ Post cancelled: Contains blacklisted word.")
                 return
             new_name = clean_app_filename(message.document.file_name, tag)
-            file_path = await message.download(file_name=new_name)
-            await client.send_document(chat_id=target_channel, document=file_path, caption=clean_cap, file_name=new_name, parse_mode=ParseMode.MARKDOWN)
-            if os.path.exists(file_path): os.remove(file_path)
+            fp = await message.download(file_name=new_name)
+            await client.send_document(chat_id=target_channel, document=fp, caption=cap, file_name=new_name, parse_mode=ParseMode.MARKDOWN)
+            if os.path.exists(fp): os.remove(fp)
 
         elif message.photo:
-            clean_cap = clean_post_text(message.caption, u_data, g_data)
-            if clean_cap is None:
-                await status.edit_text("❌ Post cancelled: Contains global blacklisted word.")
+            cap = clean_post_text(message.caption, u_data, g_data)
+            if cap is None:
+                await status.edit_text("❌ Post cancelled: Contains blacklisted word.")
                 return
-            await client.send_photo(chat_id=target_channel, photo=message.photo.file_id, caption=clean_cap, parse_mode=ParseMode.MARKDOWN)
+            await client.send_photo(chat_id=target_channel, photo=message.photo.file_id, caption=cap, parse_mode=ParseMode.MARKDOWN)
 
         elif message.text:
-            clean_cap = clean_post_text(message.text, u_data, g_data)
-            if clean_cap is None:
-                await status.edit_text("❌ Post cancelled: Contains global blacklisted word.")
+            cap = clean_post_text(message.text, u_data, g_data)
+            if cap is None:
+                await status.edit_text("❌ Post cancelled: Contains blacklisted word.")
                 return
-            await client.send_message(chat_id=target_channel, text=clean_cap, parse_mode=ParseMode.MARKDOWN)
+            await client.send_message(chat_id=target_channel, text=cap, parse_mode=ParseMode.MARKDOWN)
 
-        await status.edit_text("✅ Posted successfully to your connected channel!")
+        await status.edit_text("✅ Successfully posted to your channel!")
 
-        # Update Analytics in Firebase
+        # Log for Owner Admin Panel
         db_post("post_logs", {
             "time": datetime.utcnow().strftime("%H:%M:%S"),
-            "user": user_id,
+            "user_id": user_id,
+            "user_name": message.from_user.first_name or "User",
             "channel": target_channel,
-            "title": (message.caption or message.text or "Media")[:30] + "..."
+            "content": (message.caption or message.text or message.document.file_name if message.document else "Media")[:40]
         })
-        curr_count = db_get(f"global_config/daily_stats/{today_date}")
-        new_count = (curr_count if isinstance(curr_count, int) else 0) + 1
-        db_put(f"global_config/daily_stats/{today_date}", new_count)
+        curr = db_get(f"global_config/daily_stats/{today}")
+        db_put(f"global_config/daily_stats/{today}", (curr if isinstance(curr, int) else 0) + 1)
 
     except Exception as e:
         await status.edit_text(f"❌ Failed to post: {e}")
 
 async def main():
     await bot.start()
-    print(">>> Multi-User SaaS Bot is RUNNING! <<<")
+    print(">>> SaaS Bot with Dedicated Admin & MiniApp Live! <<<")
     await idle()
     await bot.stop()
 
