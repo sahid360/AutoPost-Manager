@@ -14,6 +14,7 @@ asyncio.set_event_loop(loop)
 from pyrogram import Client, filters, idle
 from pyrogram.enums import ParseMode, ChatMemberStatus
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+from pyrogram.errors import MessageNotModified
 
 API_ID = 34563277
 API_HASH = "7cc2cab7ad6241204f83c0a7fe52e5df"
@@ -21,12 +22,11 @@ BOT_TOKEN = "9243394920:AAGg8P8oWdJOETRt6yBvBhDEJTnkrEMKNlM"
 FIREBASE_BASE = "https://autopost-manager-c91ed-default-rtdb.firebaseio.com"
 RENDER_URL = "https://autopost-manager-1.onrender.com"
 
-# Anti-Spam Cooldown tracker (ইউজারকে বারবার স্প্যাম মেসেজ পাঠানো বন্ধের জন্য)
+# Cooldown to stop duplicate spam messages
 LAST_WARN_TIME = {}
-
-def can_send_warn(uid):
+def can_send_warning(uid):
     now = time.time()
-    if uid in LAST_WARN_TIME and (now - LAST_WARN_TIME[uid]) < 5:
+    if uid in LAST_WARN_TIME and (now - LAST_WARN_TIME[uid]) < 8:
         return False
     LAST_WARN_TIME[uid] = now
     return True
@@ -51,7 +51,7 @@ def db_post(path, data):
     except:
         pass
 
-# Ensure Config
+# Global Settings Init
 g_cfg = db_get("global_config")
 if not g_cfg:
     db_put("global_config", {
@@ -86,19 +86,19 @@ USER_MINIAPP_HTML = """<!DOCTYPE html>
 </head>
 <body>
     <div class="card">
-        <h3>⚡ AutoPost Channel Setup</h3>
-        <label>Target Channel ID:</label>
-        <input type="text" id="target_channel" placeholder="-1001234567890">
-        <a class="helper-link" href="https://t.me/userinfobot" target="_blank">🔍 Get Channel ID from @userinfobot</a>
+        <h3>⚡ AutoPost Channel / Group Setup</h3>
+        <label>Target Channel or Group ID:</label>
+        <input type="text" id="target_channel" placeholder="-100xxxxxxxxxx">
+        <a class="helper-link" href="https://t.me/userinfobot" target="_blank">🔍 Get ID from @userinfobot</a>
 
-        <label>Channel Category:</label>
-        <input type="text" id="channel_category" placeholder="Mod Apps, Movies, Tech, Anime">
+        <label>Category (Channel / Group Category):</label>
+        <input type="text" id="channel_category" placeholder="Mod Apps, Movies, Tech, Gaming">
 
         <label>File Suffix Tag:</label>
         <input type="text" id="channel_tag" placeholder="@MyChannel">
 
-        <label>Languages to Wipe Out (Comma-separated):</label>
-        <input type="text" id="remove_languages" placeholder="bengali, hindi, arabic, urdu">
+        <label>Languages to Wipe Out (Keep empty for none):</label>
+        <input type="text" id="remove_languages" placeholder="e.g. bengali, hindi, arabic, urdu">
 
         <label>Post Footer / Credits:</label>
         <textarea id="footer_text" placeholder="⌲ @MyChannel&#10;Share with friends 👥"></textarea>
@@ -109,7 +109,7 @@ USER_MINIAPP_HTML = """<!DOCTYPE html>
     <script>
         const tg = window.Telegram.WebApp;
         tg.expand();
-        const user = tg.initDataUnsafe?.user || { id: "test_user", first_name: "User" };
+        const user = tg.initDataUnsafe?.user || { id: "demo_user", first_name: "User" };
         const FIREBASE = "https://autopost-manager-c91ed-default-rtdb.firebaseio.com";
 
         async function init() {
@@ -120,7 +120,7 @@ USER_MINIAPP_HTML = """<!DOCTYPE html>
                     document.getElementById('target_channel').value = data.target_channel || "";
                     document.getElementById('channel_category').value = data.channel_category || "";
                     document.getElementById('channel_tag').value = data.channel_tag || "";
-                    document.getElementById('remove_languages').value = data.remove_languages || "bengali";
+                    document.getElementById('remove_languages').value = data.remove_languages || "";
                     document.getElementById('footer_text').value = data.footer_text || "";
                 }
             } catch(e) {}
@@ -174,7 +174,6 @@ async def get_missing_subs(client, user_id):
             if m.status not in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER]:
                 missing.append(ch)
         except Exception:
-            # Bot channel access na thakle user ke block korbe na
             pass
     return missing
 
@@ -193,10 +192,12 @@ def clean_post_text(text, u_data, g_data):
         if w and re.search(r'\b' + re.escape(w) + r'\b', text, re.IGNORECASE):
             return None
 
-    user_langs = u_data.get("remove_languages", "bengali")
-    for lang in user_langs.split(","):
-        k = lang.strip().lower()
-        if k in LANG_PATTERNS: text = re.sub(LANG_PATTERNS[k], '', text)
+    # Dynamic Language Removal (Only if typed by user)
+    user_langs = u_data.get("remove_languages", "")
+    if user_langs:
+        for lang in user_langs.split(","):
+            k = lang.strip().lower()
+            if k in LANG_PATTERNS: text = re.sub(LANG_PATTERNS[k], '', text)
 
     for emo in ["⌲", "💫"]: text = text.replace(emo, "")
     text = re.sub(r'https?://\S+|www\.\S+|t\.me/\S+', '', text)
@@ -236,7 +237,7 @@ async def start_handler(client, message):
             "photo_url": f"https://t.me/i/userpic/320/{message.from_user.username}.jpg" if message.from_user.username else "",
             "target_channel": "", "channel_category": "General",
             "channel_tag": "@MyChannel", "footer_text": "⌲ @MyChannel\nShare with friends 👥",
-            "remove_languages": "bengali", "is_banned": False
+            "remove_languages": "", "is_banned": False
         })
 
     if u_data.get("is_banned", False):
@@ -253,34 +254,42 @@ async def start_handler(client, message):
 
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📱 Open Mini App Setup", web_app=WebAppInfo(url=RENDER_URL))],
-        [InlineKeyboardButton("📢 Connect Channel", callback_data="btn_connect_channel")],
-        [InlineKeyboardButton("🏷 Set Suffix Tag", callback_data="btn_set_tag"), InlineKeyboardButton("📂 Set Category", callback_data="btn_set_category")],
+        [InlineKeyboardButton("📡 Connect Channel / Group", callback_data="btn_connect_channel")],
+        [InlineKeyboardButton("🏷 Suffix Tag", callback_data="btn_set_tag"), InlineKeyboardButton("📂 Category", callback_data="btn_set_category")],
         [InlineKeyboardButton("🌐 Wipe Languages", callback_data="btn_set_lang")],
-        [InlineKeyboardButton("🔍 Get Channel ID (@userinfobot)", url="https://t.me/userinfobot")]
+        [InlineKeyboardButton("🔍 Get ID from @userinfobot", url="https://t.me/userinfobot")]
     ])
     await message.reply_text(f"👋 **Welcome, {message.from_user.first_name}!**\nManage settings via Mini App or buttons below:", reply_markup=keyboard)
 
 @bot.on_callback_query()
 async def callback_gate(client, cb):
     uid = str(cb.from_user.id)
+    await cb.answer()
+
     if cb.data == "check_all_subs":
         missing = await get_missing_subs(client, cb.from_user.id)
         if not missing:
-            await cb.message.edit_text("✅ All channels verified! Send `/start` to begin.")
+            try: await cb.message.edit_text("✅ All channels verified! Send `/start` to begin.")
+            except MessageNotModified: pass
         else:
             await cb.answer("❌ You still haven't joined all channels!", show_alert=True)
+            
     elif cb.data == "btn_connect_channel":
         USER_STEPS[uid] = "WAIT_CH_ID"
-        await cb.message.reply_text("📍 Send your Target Channel ID (e.g. `-100xxxxxxxxxx`):\n\n*(Make sure bot is Admin with Post Messages in that channel)*")
+        await cb.message.reply_text(
+            "📍 **Step 1: Send your Target Channel or Group ID:**\n\n"
+            "👉 e.g. `-100xxxxxxxxxx` or `@YourChannel`\n\n"
+            "*(Make sure bot is an Admin with 'Post Messages' in that channel/group)*"
+        )
     elif cb.data == "btn_set_category":
         USER_STEPS[uid] = "WAIT_CAT"
-        await cb.message.reply_text("📂 Send your Channel Category (e.g. Mod Apps, Movies, Tech):")
+        await cb.message.reply_text("📂 Send your Channel / Group Category (e.g. Mod Apps, Movies, Tech):")
     elif cb.data == "btn_set_tag":
         USER_STEPS[uid] = "WAIT_TAG"
         await cb.message.reply_text("🏷 Send your File Suffix Tag (e.g. `@MyChannel`):")
     elif cb.data == "btn_set_lang":
         USER_STEPS[uid] = "WAIT_LANG"
-        await cb.message.reply_text("🌐 Send languages to wipe out (e.g. `bengali, hindi, arabic`):")
+        await cb.message.reply_text("🌐 Send language names to wipe out separated by comma (e.g. `bengali, hindi, arabic`):")
 
 @bot.on_message(filters.private & ~filters.command(["start", "help"]))
 async def message_dispatcher(client, message):
@@ -289,29 +298,29 @@ async def message_dispatcher(client, message):
     g_data = db_get("global_config")
 
     if u_data.get("is_banned", False):
-        if can_send_warn(uid): await message.reply_text("🚫 You are banned from using this service.")
+        if can_send_warning(uid): await message.reply_text("🚫 You are banned from using this service.")
         return
 
-    # Check Force Sub (Fixed: missing khali holei subbed)
+    # Check Force Sub
     missing = await get_missing_subs(client, message.from_user.id)
     if missing:
-        if can_send_warn(uid):
+        if can_send_warning(uid):
             await message.reply_text("⚠️ Unsubscribed from mandatory channels detected! Run `/start` to verify.")
         return
 
-    # Handle Step-by-Step setup inputs
+    # Handle Step-by-Step Inputs (Only when text is manually typed)
     step = USER_STEPS.get(uid)
-    if step:
-        txt = message.text.strip() if message.text else ""
+    if step and message.text and not message.forward_date:
+        txt = message.text.strip()
         if step == "WAIT_CH_ID":
             try:
-                ch_id = int(txt)
-                await client.send_message(ch_id, "🤖 **AutoPost Manager connected successfully!**")
-                db_put(f"users/{uid}/target_channel", ch_id)
+                ch_target = int(txt) if (txt.startswith("-") or txt.isdigit()) else txt
+                await client.send_message(ch_target, "🤖 **AutoPost Manager connected successfully!**")
+                db_put(f"users/{uid}/target_channel", ch_target)
                 USER_STEPS.pop(uid, None)
-                await message.reply_text(f"✅ Target Channel (`{ch_id}`) connected successfully!")
+                await message.reply_text(f"✅ Target (`{ch_target}`) connected and verified successfully!")
             except Exception as e:
-                await message.reply_text(f"❌ Failed! Ensure bot is Admin with 'Post Messages' in that channel.\nError: `{e}`")
+                await message.reply_text(f"❌ Failed! Ensure bot is Admin with 'Post Messages' permission in that channel/group.\nError: `{e}`")
             return
         elif step == "WAIT_CAT":
             db_put(f"users/{uid}/channel_category", txt)
@@ -329,30 +338,23 @@ async def message_dispatcher(client, message):
             await message.reply_text(f"✅ Language filter set to: `{txt}`")
             return
 
-    # Channel Auto-Connect via Forwarded post from channel
-    if message.forward_from_chat:
-        f_chat = message.forward_from_chat
-        try:
-            await client.send_message(f_chat.id, "🤖 **AutoPost Manager verified & connected to this channel!**")
-            db_put(f"users/{uid}/target_channel", f_chat.id)
-            if f_chat.username:
-                db_put(f"users/{uid}/channel_username", f"@{f_chat.username}")
-            await message.reply_text(f"🎉 **Channel Verified:** '{f_chat.title}' (`{f_chat.id}`) is successfully connected!")
-            return
-        except Exception:
-            pass
-
-    target_channel = u_data.get("target_channel")
-    if not target_channel:
-        if can_send_warn(uid):
+    # Target destination check
+    target_raw = u_data.get("target_channel")
+    if not target_raw:
+        if can_send_warning(uid):
             btns = InlineKeyboardMarkup([
-                [InlineKeyboardButton("📡 Connect Channel", callback_data="btn_connect_channel")],
+                [InlineKeyboardButton("📡 Connect Channel / Group", callback_data="btn_connect_channel")],
                 [InlineKeyboardButton("⚙️ Open Mini App Settings", web_app=WebAppInfo(url=RENDER_URL))]
             ])
-            await message.reply_text("⚠️ No channel connected yet! Click below to connect:", reply_markup=btns)
+            await message.reply_text("⚠️ No channel/group connected yet! Click below to connect:", reply_markup=btns)
         return
 
-    status = await message.reply_text("⏳ Processing post for your channel...")
+    try:
+        target_channel = int(target_raw) if str(target_raw).startswith("-") or str(target_raw).isdigit() else target_raw
+    except:
+        target_channel = target_raw
+
+    status = await message.reply_text("⏳ Processing post for your channel/group...")
 
     try:
         tag = u_data.get("channel_tag", "")
@@ -393,7 +395,7 @@ async def message_dispatcher(client, message):
                 return
             sent_msg = await client.send_message(chat_id=target_channel, text=cap, parse_mode=ParseMode.MARKDOWN)
 
-        await status.edit_text("✅ Successfully posted to your channel!")
+        await status.edit_text("✅ Successfully posted to your channel/group!")
 
         # Post link inspection for Admin Panel
         post_link = ""
@@ -418,7 +420,7 @@ async def message_dispatcher(client, message):
 
 async def main():
     await bot.start()
-    print(">>> Anti-Spam SaaS Bot Running! <<<")
+    print(">>> AutoPost Bot is Running Smoothly! <<<")
     await idle()
     await bot.stop()
 
