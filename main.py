@@ -14,7 +14,6 @@ asyncio.set_event_loop(loop)
 from pyrogram import Client, filters, idle
 from pyrogram.enums import ParseMode, ChatMemberStatus
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
-from pyrogram.errors import MessageNotModified
 
 API_ID = 34563277
 API_HASH = "7cc2cab7ad6241204f83c0a7fe52e5df"
@@ -22,11 +21,11 @@ BOT_TOKEN = "9243394920:AAGg8P8oWdJOETRt6yBvBhDEJTnkrEMKNlM"
 FIREBASE_BASE = "https://autopost-manager-c91ed-default-rtdb.firebaseio.com"
 RENDER_URL = "https://autopost-manager-1.onrender.com"
 
-# Cooldown to stop duplicate spam messages
+# Anti-Flood Debounce
 LAST_WARN_TIME = {}
 def can_send_warning(uid):
     now = time.time()
-    if uid in LAST_WARN_TIME and (now - LAST_WARN_TIME[uid]) < 8:
+    if uid in LAST_WARN_TIME and (now - LAST_WARN_TIME[uid]) < 5:
         return False
     LAST_WARN_TIME[uid] = now
     return True
@@ -51,7 +50,7 @@ def db_post(path, data):
     except:
         pass
 
-# Global Settings Init
+# Global Config Init
 g_cfg = db_get("global_config")
 if not g_cfg:
     db_put("global_config", {
@@ -91,7 +90,7 @@ USER_MINIAPP_HTML = """<!DOCTYPE html>
         <input type="text" id="target_channel" placeholder="-100xxxxxxxxxx">
         <a class="helper-link" href="https://t.me/userinfobot" target="_blank">🔍 Get ID from @userinfobot</a>
 
-        <label>Category (Channel / Group Category):</label>
+        <label>Category:</label>
         <input type="text" id="channel_category" placeholder="Mod Apps, Movies, Tech, Gaming">
 
         <label>File Suffix Tag:</label>
@@ -161,7 +160,6 @@ def run_http():
 
 threading.Thread(target=run_http, daemon=True).start()
 
-# --- Force Subscription Check ---
 async def get_missing_subs(client, user_id):
     cfg = db_get("global_config")
     channels = cfg.get("force_channels", "@PhProMod").split(",")
@@ -192,7 +190,6 @@ def clean_post_text(text, u_data, g_data):
         if w and re.search(r'\b' + re.escape(w) + r'\b', text, re.IGNORECASE):
             return None
 
-    # Dynamic Language Removal (Only if typed by user)
     user_langs = u_data.get("remove_languages", "")
     if user_langs:
         for lang in user_langs.split(","):
@@ -244,7 +241,6 @@ async def start_handler(client, message):
         await message.reply_text("🚫 You are banned from using this bot.")
         return
 
-    # Check Force Subs
     missing = await get_missing_subs(client, message.from_user.id)
     if missing:
         btns = [[InlineKeyboardButton(f"📢 Join {c}", url=f"https://t.me/{c.replace('@','').strip()}")] for c in missing]
@@ -270,16 +266,18 @@ async def callback_gate(client, cb):
         missing = await get_missing_subs(client, cb.from_user.id)
         if not missing:
             try: await cb.message.edit_text("✅ All channels verified! Send `/start` to begin.")
-            except MessageNotModified: pass
+            except: pass
         else:
             await cb.answer("❌ You still haven't joined all channels!", show_alert=True)
             
     elif cb.data == "btn_connect_channel":
         USER_STEPS[uid] = "WAIT_CH_ID"
         await cb.message.reply_text(
-            "📍 **Step 1: Send your Target Channel or Group ID:**\n\n"
-            "👉 e.g. `-100xxxxxxxxxx` or `@YourChannel`\n\n"
-            "*(Make sure bot is an Admin with 'Post Messages' in that channel/group)*"
+            "📍 **Step 1: Send your Channel or Group ID:**\n\n"
+            "👉 e.g. `-100xxxxxxxxxx`\n\n"
+            "⚠️ **Rules:**\n"
+            "1. You must be the **Owner/Admin** of that channel/group.\n"
+            "2. Make sure this bot is added as an **Admin with Post Messages**."
         )
     elif cb.data == "btn_set_category":
         USER_STEPS[uid] = "WAIT_CAT"
@@ -289,7 +287,7 @@ async def callback_gate(client, cb):
         await cb.message.reply_text("🏷 Send your File Suffix Tag (e.g. `@MyChannel`):")
     elif cb.data == "btn_set_lang":
         USER_STEPS[uid] = "WAIT_LANG"
-        await cb.message.reply_text("🌐 Send language names to wipe out separated by comma (e.g. `bengali, hindi, arabic`):")
+        await cb.message.reply_text("🌐 Send language names to wipe out (e.g. `bengali, hindi, arabic`):")
 
 @bot.on_message(filters.private & ~filters.command(["start", "help"]))
 async def message_dispatcher(client, message):
@@ -301,26 +299,37 @@ async def message_dispatcher(client, message):
         if can_send_warning(uid): await message.reply_text("🚫 You are banned from using this service.")
         return
 
-    # Check Force Sub
     missing = await get_missing_subs(client, message.from_user.id)
     if missing:
         if can_send_warning(uid):
             await message.reply_text("⚠️ Unsubscribed from mandatory channels detected! Run `/start` to verify.")
         return
 
-    # Handle Step-by-Step Inputs (Only when text is manually typed)
+    # Handle Step-by-Step Inputs (With Admin Ownership Verification)
     step = USER_STEPS.get(uid)
     if step and message.text and not message.forward_date:
         txt = message.text.strip()
         if step == "WAIT_CH_ID":
             try:
                 ch_target = int(txt) if (txt.startswith("-") or txt.isdigit()) else txt
-                await client.send_message(ch_target, "🤖 **AutoPost Manager connected successfully!**")
+                
+                # SECURITY CHECK: Verify if the user is actually an Admin of this channel
+                try:
+                    user_member = await client.get_chat_member(ch_target, message.from_user.id)
+                    if user_member.status not in [ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER]:
+                        await message.reply_text("❌ **Access Denied:** You are NOT an Admin or Owner of this channel/group!")
+                        return
+                except Exception as perm_err:
+                    await message.reply_text(f"❌ **Verification Failed:** Make sure the bot is an Admin in that channel!\nError: `{perm_err}`")
+                    return
+
+                # Send confirmation into channel
+                await client.send_message(ch_target, "🤖 **AutoPost Manager verified & connected successfully!**")
                 db_put(f"users/{uid}/target_channel", ch_target)
                 USER_STEPS.pop(uid, None)
                 await message.reply_text(f"✅ Target (`{ch_target}`) connected and verified successfully!")
             except Exception as e:
-                await message.reply_text(f"❌ Failed! Ensure bot is Admin with 'Post Messages' permission in that channel/group.\nError: `{e}`")
+                await message.reply_text(f"❌ Invalid Channel ID! Error: `{e}`")
             return
         elif step == "WAIT_CAT":
             db_put(f"users/{uid}/channel_category", txt)
@@ -354,6 +363,7 @@ async def message_dispatcher(client, message):
     except:
         target_channel = target_raw
 
+    # PROCESS AND FORWARD POST (NEVER CONNECTS ANY CHANNEL HERE)
     status = await message.reply_text("⏳ Processing post for your channel/group...")
 
     try:
@@ -420,7 +430,7 @@ async def message_dispatcher(client, message):
 
 async def main():
     await bot.start()
-    print(">>> AutoPost Bot is Running Smoothly! <<<")
+    print(">>> AutoPost Secure Bot is Running! <<<")
     await idle()
     await bot.stop()
 
