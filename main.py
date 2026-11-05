@@ -1,173 +1,628 @@
-<!DOCTYPE html>
+import os
+import re
+import asyncio
+import threading
+import json
+import time
+from datetime import datetime
+import requests
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
+
+from pyrogram import Client, filters, idle
+from pyrogram.enums import ParseMode, ChatMemberStatus
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+
+API_ID = 34563277
+API_HASH = "7cc2cab7ad6241204f83c0a7fe52e5df"
+BOT_TOKEN = "9243394920:AAGg8P8oWdJOETRt6yBvBhDEJTnkrEMKNlM"
+FIREBASE_BASE = "https://autopost-manager-c91ed-default-rtdb.firebaseio.com"
+RENDER_URL = "https://autopost-manager-1.onrender.com"
+
+# Anti-Flood Debounce
+LAST_WARN_TIME = {}
+def can_send_warning(uid):
+    now = time.time()
+    if uid in LAST_WARN_TIME and (now - LAST_WARN_TIME[uid]) < 5:
+        return False
+    LAST_WARN_TIME[uid] = now
+    return True
+
+# --- Firebase Helpers ---
+def db_get(path):
+    try:
+        r = requests.get(f"{FIREBASE_BASE}/{path}.json", timeout=5)
+        return r.json() or {}
+    except:
+        return {}
+
+def db_put(path, data):
+    try:
+        requests.put(f"{FIREBASE_BASE}/{path}.json", json=data, timeout=5)
+    except:
+        pass
+
+def db_post(path, data):
+    try:
+        requests.post(f"{FIREBASE_BASE}/{path}.json", json=data, timeout=5)
+    except:
+        pass
+
+# Global Settings Init
+g_cfg = db_get("global_config")
+if not g_cfg:
+    db_put("global_config", {
+        "force_channels": "@PhProMod",
+        "global_blocked_words": "scam, fraud, 18+",
+        "admin_pin": "1234",
+        "daily_stats": {}
+    })
+
+# ==========================================
+# UNIFIED ALL-IN-ONE MINI APP & ADMIN PANEL
+# ==========================================
+UNIFIED_WEB_APP_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Canva Pro Team & Admin</title>
-  
-  <!-- ✅ SDKs -->
-  <script src="https://telegram.org/js/telegram-web-app.js?56"></script>
-  <script src="https://richinfo.co/richpartners/telegram/js/tg-ob.js"></script>
-  <script type="text/javascript" src="https://cdn.tgads.space/assets/js/adexium-widget.min.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-
-  <style>
-    /* ================= GLOBAL CSS ================= */
-    :root { 
-        --primary: #6200ea; --secondary: #03dac5; --light: #ffffff; --dark: #121212; 
-        --card-bg: #1f1f1f; --text-color: #ffffff; --ad-bg: #222; --ad-item-bg: #333; 
-        --border-color: #444; --info: #17a2b8; --green-status: #28a745; --red-status: #dc3545; 
-        --danger: #dc3545; --warning: #ffc107; --success: #28a745; 
-        --social-btn-padding: 6px 12px; --social-btn-font: 10.5px; 
-        --wa-btn-padding: 6px 12px; --wa-btn-font: 10.5px; 
-        --highlight-bg: #444; --highlight-text: #fff;
-    }
-    body.light-mode { 
-        --dark: #f0f2f5; --card-bg: #ffffff; --text-color: #000000; 
-        --ad-bg: #f9f9f9; --ad-item-bg: #f1f1f1; --border-color: #dddddd; 
-        background: #f0f2f5 !important; --highlight-bg: #e0e0e0; --highlight-text: #000;
-    }
-    * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', Tahoma, sans-serif; }
-    body { background: linear-gradient(135deg, var(--dark), #1a1a2e); color: var(--text-color); min-height: 100vh; display: flex; flex-direction: column; align-items: center; transition: all 0.4s ease; padding: 10px; padding-bottom: 75px; text-align: center; overflow-x: hidden;}
-    
-    #preloader { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: var(--dark); color: var(--light); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 99999; transition: opacity 0.5s ease, visibility 0.5s ease; }
-    #preloader-logo { max-width: 120px; height: auto; animation: logo-pulse 2s infinite; border-radius: 10px; }
-    @keyframes logo-pulse { 0% { transform: scale(1); } 50% { transform: scale(1.05); } 100% { transform: scale(1); } }
-    .fade-out { opacity: 0; visibility: hidden; }
-    
-    #mode-toggle { padding: 4px 5px; background: transparent; color: var(--text-color); border: none; border-radius: 100px; cursor: pointer; font-size: 20px; transition: all 0.3s ease; z-index: 1100; position: absolute; top: 15px; right: 15px;}
-    body.light-mode #mode-toggle { color: #000; }
-    
-    .ad-notification { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: rgba(40, 167, 69, 0.95); backdrop-filter: blur(5px); color: white; padding: 10px 20px; border-radius: 30px; z-index: 9999999 !important; display: none; font-size: 13.5px; font-weight: bold; white-space: nowrap; box-shadow: 0 8px 20px rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.2); animation: slideDown 0.3s ease-out; }
-    .ad-notification.error { background: rgba(220, 53, 69, 0.95) !important; border-color: rgba(255, 0, 0, 0.5); }
-    @keyframes slideDown { 0% { top: -20px; opacity: 0; } 100% { top: 20px; opacity: 1; } }
-
-    .custom-modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.8); backdrop-filter: blur(5px); display: none; justify-content: center; align-items: center; z-index: 10000; }
-    .modal-box { background: var(--card-bg); padding: 25px 20px 20px 20px; border-radius: 16px; width: 95%; max-width: 450px; text-align: center; border: 1px solid var(--border-color); position: relative; animation: pop-in 0.3s ease; box-shadow: 0 10px 30px rgba(0,0,0,0.4); max-height: 95vh; overflow-y: auto; }
-    .modal-input { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--ad-bg); color: var(--text-color); margin-bottom: 15px; box-sizing: border-box; outline: none; font-size: 14px; text-align: center; }
-    .clean-close-icon-new { position: absolute; top: 15px; right: 15px; background: rgba(128,128,128,0.1); width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; border: 1px solid var(--border-color); cursor: pointer; color: var(--text-color); transition: 0.2s; }
-    body.light-mode .clean-close-icon-new { border-color: #e0e0e0; color: #666; background: #f0f0f0; }
-
-    /* ================= USER SITE CSS ================= */
-    #user-site-wrapper { width: 100%; display: flex; flex-direction: column; align-items: center; }
-    .user-container { width: 100%; max-width: 500px; background: var(--card-bg); border-radius: 20px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); overflow: hidden; padding-bottom: 20px; margin-bottom: 20px; transition: all 0.4s ease; display: none; }
-    .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background: var(--card-bg); border-top: 1px solid var(--border-color); display: flex; justify-content: space-around; align-items: center; padding: 10px 5px; z-index: 1000; box-shadow: 0 -4px 15px rgba(0,0,0,0.3); }
-    .nav-item { display: flex; flex-direction: column; align-items: center; gap: 4px; color: #888; cursor: pointer; font-size: 11px; font-weight: bold; transition: 0.3s; flex: 1; text-align: center; position: relative; }
-    .nav-item.active { color: var(--secondary); }
-    .nav-icon { font-size: 22px; margin-bottom: 2px; }
-    .nav-dot { position: absolute; top: -2px; right: 25px; width: 8px; height: 8px; background-color: var(--red-status); border-radius: 50%; box-shadow: 0 0 8px var(--red-status); display: none; animation: pulse-dot 1.5s infinite; }
-    .tab-content { display: none; animation: pop-in 0.4s ease; }
-    .tab-content.active { display: block; }
-    .content { padding: 25px; padding-top: 10px; } 
-    
-    .banner-slider-container { width: 100%; height: 150px; overflow: hidden; position: relative; margin-bottom: 0px; background: #000; border-top-left-radius: 20px; border-top-right-radius: 20px; }
-    .banner-slide { width: 100%; height: 100%; position: absolute; top: 0; left: 0; opacity: 0; transition: opacity 1s ease-in-out; cursor: pointer; display: flex; justify-content: center; align-items: center; background-color: #1a1a1a; }
-    .banner-slide.active { opacity: 1; }
-    .banner-slide img, .banner-slide iframe { width: 100%; height: 100%; object-fit: cover; border: none; }
-    .mute-toggle { position: absolute; bottom: 5px; right: 5px; background: transparent; color: white; border: none; border-radius: 50%; width: 30px; height: 30px; line-height: 30px; text-align: center; font-size: 14px; cursor: pointer; z-index: 100; display: none; }
-    .progress-container { width: 100%; background: #333; border-radius: 12px; margin-bottom: 25px; overflow: hidden; height: 30px; display: flex; border: 1px solid var(--border-color); }
-    .step-inner { display: flex; width: 100%; height: 100%; }
-    .step-box { flex: 1; text-align: center; line-height: 27px; font-size: 14px; font-weight: bold; color: #fff; background-color: #444; transition: background 0.3s ease; white-space: nowrap; overflow: hidden; }
-    .step-box.active-pulse { animation: pulse-animation 1.5s infinite; box-shadow: inset 0 0 10px rgba(255,255,255,0.5); }
-    
-    .btn-3d { padding: 14px 20px; border: none; border-radius: 12px; font-size: 16px; font-weight: bold; cursor: pointer; color: var(--light); background: linear-gradient(135deg, var(--primary), #8e24aa); transition: 0.3s ease; box-shadow: 0 4px 10px rgba(98,0,234,0.3); width: 100%; }
-    .btn-3d:hover { transform: translateY(-2px); filter: brightness(1.1); }
-    #canva-pro-btn { font-size: 22px; padding: 16px 24px; letter-spacing: 0.5px; white-space: normal; line-height: 1.3; }
-    .btn-small { padding: 10px 15px; font-size: 14px; width: auto; }
-    
-    .task-card { display: flex; align-items: center; justify-content: space-between; background: var(--card-bg); padding: 14px 10px; border-radius: 14px; margin-bottom: 10px; border: 1px solid var(--border-color); box-shadow: 0 4px 10px rgba(0,0,0,0.15); gap: 8px; }
-    body.light-mode .task-card { background: #ffffff; border-color: #ddd; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }
-    .task-left { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
-    .task-logo { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; background: var(--ad-bg); border: 1px solid var(--border-color); flex-shrink: 0; display:flex; justify-content:center; align-items:center; font-size:20px; }
-    .task-info { display: flex; flex-direction: column; gap: 5px; text-align: left; flex: 1; min-width: 0; }
-    .task-title { font-weight: bold; font-size: 14px; color: var(--text-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .task-info-bottom { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; overflow: hidden; }
-    .task-reward { font-size: 13px; font-weight: 800; color: #ffc107; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; flex-shrink: 0; }
-    .task-progress-wrap { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
-    .task-progress-track { width: 35px; height: 4px; background: #444; border-radius: 4px; overflow: hidden; flex-shrink: 0; }
-    .task-progress-fill { height: 100%; background: linear-gradient(90deg, #ff7b00, #ff9e00); border-radius: 4px; transition: width 0.3s ease; }
-    .task-progress-text { font-size: 10px; color: #888; font-weight: bold; white-space: nowrap; flex-shrink: 0;}
-    .task-btn-start { background: linear-gradient(135deg, #ff7b00, #ff9e00); color: #fff; font-weight: 800; border: none; border-radius: 8px; cursor: pointer; flex-shrink: 0; box-shadow: 0 4px 10px rgba(255, 123, 0, 0.3); text-transform: uppercase; transition: 0.2s; padding: var(--social-btn-padding); font-size: var(--social-btn-font); }
-    .task-btn-start.pending { background: linear-gradient(135deg, #f39c12, #f1c40f); color: #000; cursor: default; }
-    .task-btn-start.cooldown { background: #555 !important; color: #fff !important; box-shadow: none !important; cursor: default !important; }
-    .task-btn-start.completed { background: rgba(40, 167, 69, 0.15) !important; box-shadow: none !important; border: 1px solid var(--success) !important; color: var(--success) !important; cursor: default !important; }
-    
-    .points-display { font-size: 15px; font-weight: bold; color: var(--warning); display: flex; align-items: center; gap: 5px; background: var(--ad-item-bg); padding: 6px 12px; border-radius: 10px; border: 1px solid var(--border-color); white-space: nowrap; }
-    body.light-mode .points-display { background: #fff3cd; border-color: #ffeeba; color: #856404; }
-    
-    .activity-card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 14px; padding: 12px; margin-bottom: 12px; display: flex; gap: 12px; align-items: center; transition: 0.3s; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }
-    body.light-mode .activity-card { background: #fff; border-color: #eee; }
-    .act-logo-wrap { position: relative; width: 48px; height: 48px; flex-shrink: 0; }
-    .act-main-logo { width: 100%; height: 100%; border-radius: 10px; object-fit: cover; border: 1px solid var(--border-color); background: var(--ad-bg); }
-    .act-user-avatar { position: absolute; bottom: -4px; right: -4px; width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--card-bg); object-fit: cover; }
-    body.light-mode .act-user-avatar { border-color: #fff; }
-    .act-details { flex: 1; overflow: hidden; display: flex; flex-direction: column; justify-content: center; gap: 4px; text-align: left; }
-    .act-header { display: flex; justify-content: space-between; align-items: center; }
-    .act-user-name { font-weight: bold; font-size: 14px; color: var(--text-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px; display: inline-block; vertical-align: middle; }
-    body.light-mode .act-user-name { color: #000; }
-    .act-username { font-size: 11px; color: #888; font-weight: normal; margin-left: 4px; }
-    .act-time { font-size: 11px; color: #aaa; flex-shrink: 0; }
-    .act-status { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-    /* ================= ADMIN PANEL CSS ================= */
-    #admin-panel-wrapper { display: none; width: 100%; }
-    .admin-container { width: 100%; max-width: 800px; background: transparent; border-radius: 20px; overflow: hidden; padding: 0px; transition: all 0.4s ease; margin: 0 auto; }
-    .admin-card { background: var(--card-bg); padding: 25px; border-radius: 20px; margin-bottom: 25px; border: none; text-align: left; width: 100%; box-shadow: 0 4px 15px rgba(0,0,0,0.3); }
-    body.light-mode .admin-card { box-shadow: 0 4px 20px rgba(0,0,0,0.06); }
-    .admin-card h2 { color: var(--secondary); margin-bottom: 15px; font-size: 24px; border-bottom: 2px solid var(--primary); padding-bottom: 10px; }
-    
-    #admin-nav { display: flex; justify-content: space-around; margin-bottom: 20px; border-bottom: 3px solid var(--border-color); padding-bottom: 5px; flex-wrap: wrap; gap: 5px; }
-    .admin-nav-item { flex: 1; padding: 8px 4px; cursor: pointer; font-weight: bold; color: #999; transition: all 0.3s ease; border-bottom: 3px solid transparent; font-size: 13px; text-align: center; min-width: 70px; }
-    .admin-nav-item.active { color: var(--secondary); border-bottom: 3px solid var(--secondary); }
-    .admin-tab-content { display: none; }
-    .admin-tab-content.active { display: block; }
-    
-    .admin-stat-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
-    .admin-stat-item { background: var(--card-bg); padding: 10px; border-radius: 10px; border: 1px solid var(--border-color); display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 13px; min-height: 70px; text-align: center; }
-    .admin-stat-item span { font-size: 24px; font-weight: bold; color: var(--secondary); margin-top: 5px; }
-
-    .admin-btn { background: var(--secondary); color: #000; border: none; border-radius: 8px; padding: 12px 25px; cursor: pointer; font-weight: 600; font-size: 16px; }
-    .admin-btn-sm { padding: 5px 10px; font-size: 12px; margin: 0 5px; }
-    .admin-btn-success { background: var(--success); color: #fff; }
-    .admin-btn-danger { background: var(--danger); color: #fff; }
-    .admin-btn-primary { background: var(--primary); color: #fff; }
-    .admin-btn-warning { background: var(--warning); color: #000; }
-    
-    .form-grid { display: flex; flex-direction: column; gap: 12px; margin-bottom: 15px; }
-    .form-grid label { font-size: 14px; font-weight: 600; color: #bbb; display: block; }
-    .admin-input { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--ad-item-bg); color: var(--text-color); font-size: 15px; outline: none; }
-    
-    .toggle-switch { position: relative; display: inline-block; width: 46px; height: 24px; flex-shrink: 0;}
-    .toggle-switch input { opacity: 0; width: 0; height: 0; }
-    .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #555; transition: .4s; border-radius: 34px; }
-    .slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
-    input:checked + .slider { background-color: var(--success); }
-    input:checked + .slider:before { transform: translateX(22px); }
-
-    #hidden-admin-trigger { position: fixed; bottom: 0; right: 0; width: 60px; height: 60px; z-index: 99999; background: transparent; cursor: pointer; }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AutoPost Control Center</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        :root {
+            --bg: #070b14;
+            --card: #0f172a;
+            --input: #030712;
+            --border: #1e293b;
+            --accent: #38bdf8;
+            --text: #f8fafc;
+            --muted: #94a3b8;
+            --danger: #ef4444;
+            --success: #22c55e;
+        }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 14px; }
+        .card { background: var(--card); border-radius: 14px; padding: 18px; border: 1px solid var(--border); box-shadow: 0 8px 20px rgba(0,0,0,0.6); margin-bottom: 15px; }
+        h3 { margin-top: 0; color: var(--accent); font-size: 16px; border-bottom: 1px solid var(--border); padding-bottom: 10px; }
+        label { display: block; font-size: 13px; color: var(--muted); margin-top: 14px; font-weight: 600; }
+        input[type="text"], input[type="password"], textarea, select { width: 100%; padding: 11px; border-radius: 8px; border: 1px solid var(--border); background: var(--input); color: #fff; margin-top: 6px; box-sizing: border-box; font-size: 14px; }
+        textarea { height: 75px; resize: none; }
+        .helper-link { font-size: 12px; color: var(--accent); margin-top: 5px; display: block; text-decoration: none; }
+        button { width: 100%; background: #0284c7; color: #fff; padding: 13px; border: none; border-radius: 10px; font-size: 15px; font-weight: bold; cursor: pointer; margin-top: 18px; }
+        .alert { text-align: center; margin-top: 12px; font-size: 14px; font-weight: bold; }
+        
+        /* Admin Styles */
+        #admin_panel { display: none; }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin: 15px 0; }
+        .stat-card { background: #0b1120; border: 1px solid var(--border); padding: 12px; border-radius: 8px; text-align: center; }
+        .stat-num { font-size: 22px; font-weight: bold; color: var(--accent); }
+        table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 10px; }
+        th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--border); }
+        .logs-box { max-height: 250px; overflow-y: auto; background: #030712; padding: 10px; border-radius: 8px; border: 1px solid var(--border); font-family: monospace; font-size: 11px; }
+        .log-item { padding: 6px 0; border-bottom: 1px solid #111827; }
+        .hidden-admin-btn { background: transparent; border: 1px dashed #334155; color: #64748b; font-size: 11px; padding: 8px; border-radius: 8px; margin-top: 30px; }
+        .btn-sm { padding: 4px 8px; font-size: 11px; border-radius: 4px; width: auto; margin-top: 0; }
+    </style>
 </head>
-<body class="light-mode">
-    
-    <!-- ✅ PRELOADER -->
-    <div id="preloader"><img id="preloader-logo" src="" alt="Loading Logo" style="display:none;"></div>
-    <div class="ad-notification" id="ad-notification">Notification</div>
-    <button id="mode-toggle" onclick="toggleMode()">🌙</button>
-    
-    <!-- ✅ HIDDEN BUTTON FOR ADMIN -->
-    <div id="hidden-admin-trigger" onclick="handleHiddenAdminClick()"></div>
+<body>
 
-    <!-- ✅ PASSWORD MODAL FOR ADMIN -->
-    <div id="admin-password-modal" class="custom-modal-overlay">
-        <div class="modal-box">
-            <h3 style="color:var(--primary); margin-bottom:15px;">🔒 Admin Access</h3>
-            <p style="font-size:14px; color:#aaa; margin-bottom:15px;">Enter admin password to continue.</p>
-            <input type="password" id="hidden-admin-pass-input" class="modal-input" placeholder="Password...">
-            <div style="display:flex; gap:10px;">
-                <button class="btn-3d" style="background:#666; padding:10px;" onclick="document.getElementById('admin-password-modal').style.display='none'">Cancel</button>
-                <button class="btn-3d" style="padding:10px;" onclick="verifyAdminPassword()">Login</button>
+    <!-- 1. USER CONFIGURATION VIEW -->
+    <div id="user_view">
+        <div class="card">
+            <h3>⚡ AutoPost Channel / Group Setup</h3>
+            
+            <label>Target Channel or Group ID:</label>
+            <input type="text" id="target_channel" placeholder="-100xxxxxxxxxx">
+            <a class="helper-link" href="https://t.me/userinfobot" target="_blank">🔍 Get ID from @userinfobot</a>
+
+            <label>Channel Category:</label>
+            <select id="channel_category">
+                <option value="Mod Apps">Mod Apps & Games</option>
+                <option value="Movies & Series">Movies & Web Series</option>
+                <option value="Tech & Software">Tech & Software</option>
+                <option value="Anime">Anime & Cartoons</option>
+                <option value="Gaming">Gaming & Esports</option>
+                <option value="News & Updates">News & Updates</option>
+                <option value="Crypto & Airdrop">Crypto & Trading</option>
+                <option value="Education">Education & Books</option>
+                <option value="General">General / Others</option>
+            </select>
+
+            <label>File Suffix Tag:</label>
+            <input type="text" id="channel_tag" placeholder="@MyChannel">
+
+            <label>Languages to Wipe Out (Type names, comma-separated):</label>
+            <input type="text" id="remove_languages" placeholder="e.g. bengali, hindi, arabic, urdu">
+
+            <label>Custom Words to Remove (comma-separated):</label>
+            <input type="text" id="blocked_words" placeholder="badword1, @foreignchannel, watermark">
+
+            <label>Post Footer / Credits:</label>
+            <textarea id="footer_text" placeholder="⌲ @MyChannel&#10;Share with friends 👥"></textarea>
+
+            <button onclick="saveUserConfig()">💾 Save Settings</button>
+            <div id="status_alert" class="alert"></div>
+        </div>
+
+        <!-- Hidden Admin Gateway -->
+        <button class="hidden-admin-btn" onclick="openAdminPortal()">🔒 Master Admin Portal</button>
+    </div>
+
+    <!-- 2. SECRET MASTER ADMIN PANEL (PROTECTED) -->
+    <div id="admin_panel">
+        <div class="card">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <h3 style="margin: 0; border: none; padding: 0;">👑 Master SaaS Admin Control</h3>
+                <button class="btn-sm" style="background: #334155;" onclick="closeAdminPortal()">Back</button>
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-card"><div>Users</div><div class="stat-num" id="adm_users">0</div></div>
+                <div class="stat-card"><div>Today</div><div class="stat-num" id="adm_today">0</div></div>
+                <div class="stat-card"><div>Total</div><div class="stat-num" id="adm_total">0</div></div>
+            </div>
+
+            <label>Change Admin Secret PIN:</label>
+            <input type="password" id="new_admin_pin" placeholder="Enter new PIN">
+
+            <label>Mandatory Join Channels (Comma-separated):</label>
+            <input type="text" id="adm_force_channels" placeholder="@PhProMod, @ChannelTwo">
+
+            <label>Global Blocked Words (Posts containing these will be blocked):</label>
+            <textarea id="adm_global_words" placeholder="scam, 18+, fraud"></textarea>
+
+            <button onclick="saveAdminPolicies()">💾 Save Global Policies</button>
+        </div>
+
+        <div class="card">
+            <h3>👥 Users Overview</h3>
+            <div style="overflow-x: auto;">
+                <table>
+                    <thead>
+                        <tr><th>User</th><th>Channel</th><th>Category</th><th>Action</th></tr>
+                    </thead>
+                    <tbody id="users_tbody"><tr><td colspan="4">Loading...</td></tr></tbody>
+                </table>
             </div>
         </div>
+
+        <div class="card">
+            <h3>📡 Live Post Stream</h3>
+            <div class="logs-box" id="logs_container">Loading logs...</div>
+        </div>
     </div>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.expand();
+        const user = tg.initDataUnsafe?.user || { id: "demo_user", first_name: "User" };
+        const FIREBASE = "https://autopost-manager-c91ed-default-rtdb.firebaseio.com";
+        let CURRENT_ADMIN_PIN = "1234";
+
+        async function init() {
+            try {
+                // Fetch User Config
+                const res = await fetch(`${FIREBASE}/users/${user.id}.json`);
+                const data = await res.json();
+                if(data) {
+                    document.getElementById('target_channel').value = data.target_channel || "";
+                    if(data.channel_category) document.getElementById('channel_category').value = data.channel_category;
+                    document.getElementById('channel_tag').value = data.channel_tag || "";
+                    document.getElementById('remove_languages').value = data.remove_languages || "";
+                    document.getElementById('blocked_words').value = data.blocked_words || "";
+                    document.getElementById('footer_text').value = data.footer_text || "";
+                }
+
+                // Fetch Global Config PIN
+                const gRes = await fetch(`${FIREBASE}/global_config.json`);
+                const gData = await gRes.json();
+                if(gData && gData.admin_pin) CURRENT_ADMIN_PIN = gData.admin_pin;
+            } catch(e) {}
+        }
+
+        async function saveUserConfig() {
+            const al = document.getElementById('status_alert');
+            al.style.color = '#38bdf8'; al.innerText = "Saving settings...";
+            const payload = {
+                target_channel: document.getElementById('target_channel').value.trim(),
+                channel_category: document.getElementById('channel_category').value,
+                channel_tag: document.getElementById('channel_tag').value.trim(),
+                remove_languages: document.getElementById('remove_languages').value.trim(),
+                blocked_words: document.getElementById('blocked_words').value.trim(),
+                footer_text: document.getElementById('footer_text').value,
+                username: user.username || "", first_name: user.first_name || ""
+            };
+            await fetch(`${FIREBASE}/users/${user.id}.json`, { method: 'PATCH', body: JSON.stringify(payload) });
+            al.style.color = '#4ade80'; al.innerText = "✅ Successfully Saved!";
+            setTimeout(() => tg.close(), 1200);
+        }
+
+        // --- Admin Portal Gateway ---
+        async function openAdminPortal() {
+            const entered = prompt("🔑 Enter Admin Secret Password / PIN:");
+            if(!entered) return;
+
+            // Fetch live PIN from Firebase
+            const gRes = await fetch(`${FIREBASE}/global_config.json`);
+            const gData = await gRes.json();
+            const realPin = (gData && gData.admin_pin) ? gData.admin_pin : CURRENT_ADMIN_PIN;
+
+            if(entered === realPin) {
+                document.getElementById('user_view').style.display = 'none';
+                document.getElementById('admin_panel').style.display = 'block';
+                loadAdminData();
+            } else {
+                alert("❌ Wrong Admin PIN! Access Denied.");
+            }
+        }
+
+        function closeAdminPortal() {
+            document.getElementById('admin_panel').style.display = 'none';
+            document.getElementById('user_view').style.display = 'block';
+        }
+
+        async function loadAdminData() {
+            try {
+                const gRes = await fetch(`${FIREBASE}/global_config.json`);
+                const gData = await gRes.json() || {};
+                document.getElementById('adm_force_channels').value = gData.force_channels || "";
+                document.getElementById('adm_global_words').value = gData.global_blocked_words || "";
+                document.getElementById('new_admin_pin').value = gData.admin_pin || "1234";
+
+                const today = new Date().toISOString().split('T')[0];
+                const stats = gData.daily_stats || {};
+                document.getElementById('adm_today').innerText = stats[today] || 0;
+                let tot = 0; Object.values(stats).forEach(c => tot += c);
+                document.getElementById('adm_total').innerText = tot;
+
+                // Users list
+                const uRes = await fetch(`${FIREBASE}/users.json`);
+                const users = await uRes.json() || {};
+                const uKeys = Object.keys(users);
+                document.getElementById('adm_users').innerText = uKeys.length;
+
+                let uHtml = "";
+                for(let uid of uKeys) {
+                    const u = users[uid];
+                    const isBanned = u.is_banned === true;
+                    uHtml += `<tr>
+                        <td><b>${u.first_name || 'User'}</b><br><small>@${u.username || uid}</small></td>
+                        <td><code>${u.target_channel || 'None'}</code></td>
+                        <td>${u.channel_category || 'General'}</td>
+                        <td>
+                            <button class="btn-sm" style="background:${isBanned?'#22c55e':'#ef4444'};" onclick="toggleBan('${uid}', ${!isBanned})">
+                                ${isBanned?'Unban':'Ban'}
+                            </button>
+                        </td>
+                    </tr>`;
+                }
+                document.getElementById('users_tbody').innerHTML = uHtml || "<tr><td colspan='4'>No users.</td></tr>";
+
+                // Logs with clickable post links
+                const lRes = await fetch(`${FIREBASE}/post_logs.json`);
+                const logs = await lRes.json() || {};
+                const logArr = Object.values(logs).reverse().slice(0, 30);
+                let lHtml = "";
+                logArr.forEach(l => {
+                    const btn = l.post_link ? `<a href="${l.post_link}" target="_blank" style="color:#38bdf8; font-weight:bold;">[View Post]</a>` : '';
+                    lHtml += `<div class="log-item">
+                        <b>[${l.time}]</b> ${l.user_name} &rarr; <code>${l.channel}</code> (${l.category}) ${btn}<br>
+                        <span style="color:#94a3b8;">${l.content}</span>
+                    </div>`;
+                });
+                document.getElementById('logs_container').innerHTML = lHtml || "No recent activity.";
+            } catch(e) {}
+        }
+
+        async function saveAdminPolicies() {
+            const gRes = await fetch(`${FIREBASE}/global_config.json`);
+            const gData = await gRes.json() || {};
+
+            const newPin = document.getElementById('new_admin_pin').value.trim();
+            if(newPin) gData.admin_pin = newPin;
+            gData.force_channels = document.getElementById('adm_force_channels').value.trim();
+            gData.global_blocked_words = document.getElementById('adm_global_words').value.trim();
+
+            await fetch(`${FIREBASE}/global_config.json`, { method:'PUT', body:JSON.stringify(gData) });
+            alert("✅ Policies & PIN updated successfully!");
+        }
+
+        async function toggleBan(uid, banStatus) {
+            await fetch(`${FIREBASE}/users/${uid}/is_banned.json`, { method:'PUT', body:JSON.stringify(banStatus) });
+            loadAdminData();
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>
+"""
+
+class WebServer(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/html; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(UNIFIED_WEB_APP_HTML.encode('utf-8'))
+    def log_message(self, format, *args): return
+
+def run_http():
+    port = int(os.environ.get("PORT", 8080))
+    s = HTTPServer(("0.0.0.0", port), WebServer)
+    s.serve_forever()
+
+threading.Thread(target=run_http, daemon=True).start()
+
+# --- Force Subscription Check ---
+async def get_missing_subs(client, user_id):
+    cfg = db_get("global_config")
+    channels = cfg.get("force_channels", "@PhProMod").split(",")
+    missing = []
+    for ch in channels:
+        ch = ch.strip()
+        if not ch: continue
+        try:
+            m = await client.get_chat_member(ch, user_id)
+            if m.status not in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER]:
+                missing.append(ch)
+        except Exception:
+            pass
+    return missing
+
+LANG_PATTERNS = {
+    "bengali": r'[\u0980-\u09FF]+', "bangla": r'[\u0980-\u09FF]+',
+    "hindi": r'[\u0900-\u097F]+', "arabic": r'[\u0600-\u06FF]+',
+    "urdu": r'[\u0600-\u06FF\uFB50-\uFDFF\uFE70-\uFEFF]+', "russian": r'[\u0400-\u04FF]+',
+    "chinese": r'[\u4E00-\u9FFF]+', "japanese": r'[\u3040-\u309F\u30A0-\u30FF]+',
+    "korean": r'[\uAC00-\uD7AF\u1100-\u11FF]+', "english": r'[a-zA-Z]+'
+}
+
+def clean_post_text(text, u_data, g_data):
+    if not text: text = ""
+    g_blocked = g_data.get("global_blocked_words", "")
+    for word in g_blocked.split(","):
+        w = word.strip()
+        if w and re.search(r'\b' + re.escape(w) + r'\b', text, re.IGNORECASE):
+            return None
+
+    # User Blocked Words
+    u_blocked = u_data.get("blocked_words", "")
+    if u_blocked:
+        for word in u_blocked.split(","):
+            w = word.strip()
+            if w: text = re.sub(re.escape(w), '', text, flags=re.IGNORECASE)
+
+    # Dynamic Language Removal
+    user_langs = u_data.get("remove_languages", "")
+    if user_langs:
+        for lang in user_langs.split(","):
+            k = lang.strip().lower()
+            if k in LANG_PATTERNS: text = re.sub(LANG_PATTERNS[k], '', text)
+
+    for emo in ["⌲", "💫"]: text = text.replace(emo, "")
+    text = re.sub(r'https?://\S+|www\.\S+|t\.me/\S+', '', text)
+    text = re.sub(r'@\w+', '', text)
+    text = re.sub(r'Share It With Your Friends.*', '', text, flags=re.IGNORECASE)
+
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    footer = u_data.get("footer_text", "")
+    if not lines: return footer
+
+    first_line = re.sub(r'^\*+|\*+$', '', lines[0]).strip()
+    lines[0] = f"**{first_line}**"
+    body = f"{lines[0]}\n\n" + "\n".join(lines[1:]) if len(lines) > 1 else lines[0]
+    return f"{body}\n\n{footer}".strip() if footer else body.strip()
+
+def clean_app_filename(name, tag):
+    if not name: name = "app.apk"
+    base, ext = os.path.splitext(name)
+    base_clean = re.sub(r'@\w+', '', base)
+    base_clean = re.sub(r'\[.*?\]|\(.*?\)', '', base_clean)
+    base_clean = re.sub(r'[\s\-_]+$', '', base_clean).strip()
+    base_clean = " ".join(base_clean.split())
+    if not base_clean: base_clean = "App"
+    return f"{base_clean} {tag}{ext}" if tag else f"{base_clean}{ext}"
+
+bot = Client("ph_session", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
+USER_STEPS = {}
+
+@bot.on_message(filters.command("start") & filters.private)
+async def start_handler(client, message):
+    uid = str(message.from_user.id)
+    u_data = db_get(f"users/{uid}")
+    if not u_data:
+        db_put(f"users/{uid}", {
+            "first_name": message.from_user.first_name or "User",
+            "username": message.from_user.username or "",
+            "target_channel": "", "channel_category": "Mod Apps",
+            "channel_tag": "@MyChannel", "footer_text": "⌲ @MyChannel\nShare with friends 👥",
+            "remove_languages": "", "blocked_words": "", "is_banned": False
+        })
+
+    if u_data.get("is_banned", False):
+        await message.reply_text("🚫 You are banned from using this bot.")
+        return
+
+    missing = await get_missing_subs(client, message.from_user.id)
+    if missing:
+        btns = [[InlineKeyboardButton(f"📢 Join {c}", url=f"https://t.me/{c.replace('@','').strip()}")] for c in missing]
+        btns.append([InlineKeyboardButton("🔄 Verify Membership", callback_data="check_all_subs")])
+        await message.reply_text("⚠️ **Join Required!** Please join our channels to use this bot:", reply_markup=InlineKeyboardMarkup(btns))
+        return
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📱 Open Mini App Setup", web_app=WebAppInfo(url=RENDER_URL))],
+        [InlineKeyboardButton("📡 Connect Channel / Group", callback_data="btn_connect_channel")],
+        [InlineKeyboardButton("🏷 Suffix Tag", callback_data="btn_set_tag")],
+        [InlineKeyboardButton("🌐 Wipe Languages", callback_data="btn_set_lang")],
+        [InlineKeyboardButton("🔍 Get ID from @userinfobot", url="https://t.me/userinfobot")]
+    ])
+    await message.reply_text(f"👋 **Welcome, {message.from_user.first_name}!**\nManage settings via Mini App or buttons below:", reply_markup=keyboard)
+
+@bot.on_callback_query()
+async def callback_gate(client, cb):
+    uid = str(cb.from_user.id)
+    await cb.answer()
+
+    if cb.data == "check_all_subs":
+        missing = await get_missing_subs(client, cb.from_user.id)
+        if not missing:
+            try: await cb.message.edit_text("✅ All channels verified! Send `/start` to begin.")
+            except: pass
+        else:
+            await cb.answer("❌ You still haven't joined all channels!", show_alert=True)
+            
+    elif cb.data == "btn_connect_channel":
+        USER_STEPS[uid] = "WAIT_CH_ID"
+        await cb.message.reply_text(
+            "📍 **Step 1: Send your Channel or Group ID:**\n\n"
+            "👉 e.g. `-100xxxxxxxxxx`\n\n"
+            "⚠️ **Rules:**\n"
+            "1. You must be the **Owner/Admin** of that channel/group.\n"
+            "2. Make sure this bot is added as an **Admin with Post Messages**."
+        )
+    elif cb.data == "btn_set_tag":
+        USER_STEPS[uid] = "WAIT_TAG"
+        await cb.message.reply_text("🏷 Send your File Suffix Tag (e.g. `@MyChannel`):")
+    elif cb.data == "btn_set_lang":
+        USER_STEPS[uid] = "WAIT_LANG"
+        await cb.message.reply_text("🌐 Send language names to wipe out (e.g. `bengali, hindi, arabic`):")
+
+@bot.on_message(filters.private & ~filters.command(["start", "help"]))
+async def message_dispatcher(client, message):
+    uid = str(message.from_user.id)
+    u_data = db_get(f"users/{uid}")
+    g_data = db_get("global_config")
+
+    if u_data.get("is_banned", False):
+        if can_send_warning(uid): await message.reply_text("🚫 You are banned from using this service.")
+        return
+
+    missing = await get_missing_subs(client, message.from_user.id)
+    if missing:
+        if can_send_warning(uid):
+            await message.reply_text("⚠️ Unsubscribed from mandatory channels detected! Run `/start` to verify.")
+        return
+
+    # Handle Step-by-Step Inputs
+    step = USER_STEPS.get(uid)
+    if step and message.text and not message.forward_date:
+        txt = message.text.strip()
+        if step == "WAIT_CH_ID":
+            try:
+                ch_target = int(txt) if (txt.startswith("-") or txt.isdigit()) else txt
+                try:
+                    user_member = await client.get_chat_member(ch_target, message.from_user.id)
+                    if user_member.status not in [ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER]:
+                        await message.reply_text("❌ **Access Denied:** You are NOT an Admin or Owner of this channel/group!")
+                        return
+                except Exception as perm_err:
+                    await message.reply_text(f"❌ **Verification Failed:** Make sure the bot is an Admin in that channel!\nError: `{perm_err}`")
+                    return
+
+                await client.send_message(ch_target, "🤖 **AutoPost Manager verified & connected successfully!**")
+                db_put(f"users/{uid}/target_channel", ch_target)
+                USER_STEPS.pop(uid, None)
+                await message.reply_text(f"✅ Target (`{ch_target}`) connected and verified successfully!")
+            except Exception as e:
+                await message.reply_text(f"❌ Invalid Channel ID! Error: `{e}`")
+            return
+        elif step == "WAIT_TAG":
+            db_put(f"users/{uid}/channel_tag", txt)
+            USER_STEPS.pop(uid, None)
+            await message.reply_text(f"✅ Suffix Tag set to: `{txt}`")
+            return
+        elif step == "WAIT_LANG":
+            db_put(f"users/{uid}/remove_languages", txt)
+            USER_STEPS.pop(uid, None)
+            await message.reply_text(f"✅ Language filter set to: `{txt}`")
+            return
+
+    # Target destination check
+    target_raw = u_data.get("target_channel")
+    if not target_raw:
+        if can_send_warning(uid):
+            btns = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📡 Connect Channel / Group", callback_data="btn_connect_channel")],
+                [InlineKeyboardButton("⚙️ Open Mini App Settings", web_app=WebAppInfo(url=RENDER_URL))]
+            ])
+            await message.reply_text("⚠️ No channel/group connected yet! Click below to connect:", reply_markup=btns)
+        return
+
+    try:
+        target_channel = int(target_raw) if str(target_raw).startswith("-") or str(target_raw).isdigit() else target_raw
+    except:
+        target_channel = target_raw
+
+    status = await message.reply_text("⏳ Processing post for your channel/group...")
+
+    try:
+        tag = u_data.get("channel_tag", "")
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        sent_msg = None
+
+        if message.video:
+            cap = clean_post_text(message.caption, u_data, g_data)
+            if cap is None:
+                await status.edit_text("❌ Cancelled: Global blacklisted word found.")
+                return
+            new_name = clean_app_filename(message.video.file_name or "video.mp4", tag)
+            fp = await message.download(file_name=new_name)
+            sent_msg = await client.send_video(chat_id=target_channel, video=fp, caption=cap, file_name=new_name, parse_mode=ParseMode.MARKDOWN, supports_streaming=True)
+            if os.path.exists(fp): os.remove(fp)
+
+        elif message.document:
+            cap = clean_post_text(message.caption, u_data, g_data)
+            if cap is None:
+                await status.edit_text("❌ Cancelled: Global blacklisted word found.")
+                return
+            new_name = clean_app_filename(message.document.file_name, tag)
+            fp = await message.download(file_name=new_name)
+            sent_msg = await client.send_document(chat_id=target_channel, document=fp, caption=cap, file_name=new_name, parse_mode=ParseMode.MARKDOWN)
+            if os.path.exists(fp): os.remove(fp)
+
+        elif message.photo:
+            cap = clean_post_text(message.caption, u_data, g_data)
+            if cap is None:
+                await status.edit_text("❌ Cancelled: Global blacklisted word found.")
+                return
+            sent_msg = await client.send_photo(chat_id=target_channel, photo=message.photo.file_id, caption=cap, parse_mode=ParseMode.MARKDOWN)
+
+        elif message.text:
+            cap = clean_post_text(message.text, u_data, g_data)
+            if cap is None:
+                await status.edit_text("❌ Cancelled: Global blacklisted word found.")
+                return
+            sent_msg = await client.send_message(chat_id=target_channel, text=cap, parse_mode=ParseMode.MARKDOWN)
+
+        await status.edit_text("✅ Successfully posted to your channel/group!")
+
+        post_link = ""
+        f_chat = message.forward_from_chat
+        if f_chat and f_chat.username and message.forward_from_message_id:
+            post_link = f"https://t.me/{f_chat.username}/{message.forward_from_message_id}"
+        elif u_data.get("channel_username") and sent_msg:
+            post_link = f"https://t.me/{u_data['channel_username'].replace('@','')}/{sent_msg.id}"
+
+        db_post("post_logs", {
+            "time": datetime.utcnow().strftime("%H:%M:%S"),
+            "user_id": uid, "user_name": message.from_user.first_name or "User",
+            "channel": target_channel, "category": u_data.get("channel_category", "Mod Apps"),
+            "post_link": post_link,
+            "content": (message.caption or message.text or getattr(message.document, 'file_name', 'Media File'))[:45]
+        })
+        curr = db_get(f"global_config/daily_stats/{today}")
+        db_put(f"global_config/daily_stats/{today}", (curr if isinstance(curr, int) else 0) + 1)
+
+    except Exception as e:
+        await status.edit_text(f"❌ Failed to post: {e}")
+
+async def main():
+    await bot.start()
+    print(">>> Unified SaaS Bot Running! <<<")
+    await idle()
+    await bot.stop()
+
+if __name__ == "__main__":
+    loop.run_until_complete(main())
