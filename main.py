@@ -61,7 +61,7 @@ if not g_cfg:
     })
 
 # ==========================================
-# UNIFIED ALL-IN-ONE MINI APP & ADMIN PANEL
+# 100% ENGLISH UNIFIED MINI APP & ADMIN PANEL
 # ==========================================
 UNIFIED_WEB_APP_HTML = """<!DOCTYPE html>
 <html lang="en">
@@ -92,17 +92,20 @@ UNIFIED_WEB_APP_HTML = """<!DOCTYPE html>
         button { width: 100%; background: #0284c7; color: #fff; padding: 13px; border: none; border-radius: 10px; font-size: 15px; font-weight: bold; cursor: pointer; margin-top: 18px; }
         .alert { text-align: center; margin-top: 12px; font-size: 14px; font-weight: bold; }
         
-        /* Admin Styles */
+        /* Master Admin Styles */
         #admin_panel { display: none; }
-        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin: 15px 0; }
+        .stats-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 15px 0; }
         .stat-card { background: #0b1120; border: 1px solid var(--border); padding: 12px; border-radius: 8px; text-align: center; }
-        .stat-num { font-size: 22px; font-weight: bold; color: var(--accent); }
+        .stat-card-title { font-size: 12px; color: var(--muted); text-transform: uppercase; }
+        .stat-num { font-size: 22px; font-weight: bold; color: var(--accent); margin-top: 4px; }
         table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 10px; }
-        th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--border); }
-        .logs-box { max-height: 250px; overflow-y: auto; background: #030712; padding: 10px; border-radius: 8px; border: 1px solid var(--border); font-family: monospace; font-size: 11px; }
-        .log-item { padding: 6px 0; border-bottom: 1px solid #111827; }
+        th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+        .avatar { width: 38px; height: 38px; border-radius: 50%; object-fit: cover; background: #1e293b; border: 1px solid var(--border); }
+        .logs-box { max-height: 280px; overflow-y: auto; background: #030712; padding: 10px; border-radius: 8px; border: 1px solid var(--border); font-family: monospace; font-size: 11px; }
+        .log-item { padding: 8px 0; border-bottom: 1px solid #111827; display: flex; gap: 10px; align-items: flex-start; }
         .hidden-admin-btn { background: transparent; border: 1px dashed #334155; color: #64748b; font-size: 11px; padding: 8px; border-radius: 8px; margin-top: 30px; }
-        .btn-sm { padding: 4px 8px; font-size: 11px; border-radius: 4px; width: auto; margin-top: 0; }
+        .btn-sm { padding: 5px 10px; font-size: 11px; border-radius: 6px; width: auto; margin-top: 0; }
+        .btn-danger { background: var(--danger); }
     </style>
 </head>
 <body>
@@ -145,7 +148,6 @@ UNIFIED_WEB_APP_HTML = """<!DOCTYPE html>
             <div id="status_alert" class="alert"></div>
         </div>
 
-        <!-- Hidden Admin Gateway -->
         <button class="hidden-admin-btn" onclick="openAdminPortal()">🔒 Master Admin Portal</button>
     </div>
 
@@ -154,13 +156,27 @@ UNIFIED_WEB_APP_HTML = """<!DOCTYPE html>
         <div class="card">
             <div style="display: flex; justify-content: space-between; align-items: center;">
                 <h3 style="margin: 0; border: none; padding: 0;">👑 Master SaaS Admin Control</h3>
-                <button class="btn-sm" style="background: #334155;" onclick="closeAdminPortal()">Back</button>
+                <button class="btn-sm" style="background: #334155;" onclick="closeAdminPortal()">Exit</button>
             </div>
 
+            <!-- 4 Precise Analytics Cards -->
             <div class="stats-grid">
-                <div class="stat-card"><div>Users</div><div class="stat-num" id="adm_users">0</div></div>
-                <div class="stat-card"><div>Today</div><div class="stat-num" id="adm_today">0</div></div>
-                <div class="stat-card"><div>Total</div><div class="stat-num" id="adm_total">0</div></div>
+                <div class="stat-card">
+                    <div class="stat-card-title">Total Users</div>
+                    <div class="stat-num" id="adm_total_users">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card-title">Today Users</div>
+                    <div class="stat-num" id="adm_today_users">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card-title">Total Posts</div>
+                    <div class="stat-num" id="adm_total_posts">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card-title">Today Posts</div>
+                    <div class="stat-num" id="adm_today_posts">0</div>
+                </div>
             </div>
 
             <label>Change Admin Secret PIN:</label>
@@ -175,21 +191,26 @@ UNIFIED_WEB_APP_HTML = """<!DOCTYPE html>
             <button onclick="saveAdminPolicies()">💾 Save Global Policies</button>
         </div>
 
+        <!-- Registered Users Overview with Avatar -->
         <div class="card">
             <h3>👥 Users Overview</h3>
             <div style="overflow-x: auto;">
                 <table>
                     <thead>
-                        <tr><th>User</th><th>Channel</th><th>Category</th><th>Action</th></tr>
+                        <tr><th>Profile</th><th>Target Channel</th><th>Category</th><th>Action</th></tr>
                     </thead>
                     <tbody id="users_tbody"><tr><td colspan="4">Loading...</td></tr></tbody>
                 </table>
             </div>
         </div>
 
+        <!-- Live Post Stream with Clear History Button -->
         <div class="card">
-            <h3>📡 Live Post Stream</h3>
-            <div class="logs-box" id="logs_container">Loading logs...</div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <h3 style="margin: 0; border: none; padding: 0;">📡 Live Post Stream</h3>
+                <button class="btn-sm btn-danger" onclick="clearAllLogs()">🗑️ Clear All Logs</button>
+            </div>
+            <div class="logs-box" id="logs_container">Loading stream...</div>
         </div>
     </div>
 
@@ -202,7 +223,6 @@ UNIFIED_WEB_APP_HTML = """<!DOCTYPE html>
 
         async function init() {
             try {
-                // Fetch User Config
                 const res = await fetch(`${FIREBASE}/users/${user.id}.json`);
                 const data = await res.json();
                 if(data) {
@@ -213,8 +233,6 @@ UNIFIED_WEB_APP_HTML = """<!DOCTYPE html>
                     document.getElementById('blocked_words').value = data.blocked_words || "";
                     document.getElementById('footer_text').value = data.footer_text || "";
                 }
-
-                // Fetch Global Config PIN
                 const gRes = await fetch(`${FIREBASE}/global_config.json`);
                 const gData = await gRes.json();
                 if(gData && gData.admin_pin) CURRENT_ADMIN_PIN = gData.admin_pin;
@@ -238,12 +256,10 @@ UNIFIED_WEB_APP_HTML = """<!DOCTYPE html>
             setTimeout(() => tg.close(), 1200);
         }
 
-        // --- Admin Portal Gateway ---
         async function openAdminPortal() {
             const entered = prompt("🔑 Enter Admin Secret Password / PIN:");
             if(!entered) return;
 
-            // Fetch live PIN from Firebase
             const gRes = await fetch(`${FIREBASE}/global_config.json`);
             const gData = await gRes.json();
             const realPin = (gData && gData.admin_pin) ? gData.admin_pin : CURRENT_ADMIN_PIN;
@@ -272,22 +288,31 @@ UNIFIED_WEB_APP_HTML = """<!DOCTYPE html>
 
                 const today = new Date().toISOString().split('T')[0];
                 const stats = gData.daily_stats || {};
-                document.getElementById('adm_today').innerText = stats[today] || 0;
-                let tot = 0; Object.values(stats).forEach(c => tot += c);
-                document.getElementById('adm_total').innerText = tot;
+                document.getElementById('adm_today_posts').innerText = stats[today] || 0;
+                let totPosts = 0; Object.values(stats).forEach(c => totPosts += c);
+                document.getElementById('adm_total_posts').innerText = totPosts;
 
-                // Users list
+                // Load Users & Today Users Count
                 const uRes = await fetch(`${FIREBASE}/users.json`);
                 const users = await uRes.json() || {};
                 const uKeys = Object.keys(users);
-                document.getElementById('adm_users').innerText = uKeys.length;
+                document.getElementById('adm_total_users').innerText = uKeys.length;
 
+                let todayUsersCount = 0;
                 let uHtml = "";
                 for(let uid of uKeys) {
                     const u = users[uid];
+                    if(u.created_at === today) todayUsersCount++;
                     const isBanned = u.is_banned === true;
+                    const photo = u.photo_url || "https://cdn-icons-png.flaticon.com/512/149/149071.png";
+
                     uHtml += `<tr>
-                        <td><b>${u.first_name || 'User'}</b><br><small>@${u.username || uid}</small></td>
+                        <td>
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <img src="${photo}" class="avatar" onerror="this.src='https://cdn-icons-png.flaticon.com/512/149/149071.png'">
+                                <div><b>${u.first_name || 'User'}</b><br><small>@${u.username || uid}</small></div>
+                            </div>
+                        </td>
                         <td><code>${u.target_channel || 'None'}</code></td>
                         <td>${u.channel_category || 'General'}</td>
                         <td>
@@ -297,28 +322,38 @@ UNIFIED_WEB_APP_HTML = """<!DOCTYPE html>
                         </td>
                     </tr>`;
                 }
-                document.getElementById('users_tbody').innerHTML = uHtml || "<tr><td colspan='4'>No users.</td></tr>";
+                document.getElementById('adm_today_users').innerText = todayUsersCount;
+                document.getElementById('users_tbody').innerHTML = uHtml || "<tr><td colspan='4'>No users registered.</td></tr>";
 
-                // Logs with clickable post links
+                // Load Logs with Avatars
                 const lRes = await fetch(`${FIREBASE}/post_logs.json`);
                 const logs = await lRes.json() || {};
-                const logArr = Object.values(logs).reverse().slice(0, 30);
+                const logArr = Object.values(logs).reverse().slice(0, 35);
                 let lHtml = "";
                 logArr.forEach(l => {
-                    const btn = l.post_link ? `<a href="${l.post_link}" target="_blank" style="color:#38bdf8; font-weight:bold;">[View Post]</a>` : '';
+                    const btn = l.post_link ? `<a href="${l.post_link}" target="_blank" style="color:#38bdf8; font-weight:bold; margin-left:6px;">[View Post]</a>` : '';
+                    const logAvatar = l.photo_url || "https://cdn-icons-png.flaticon.com/512/149/149071.png";
                     lHtml += `<div class="log-item">
-                        <b>[${l.time}]</b> ${l.user_name} &rarr; <code>${l.channel}</code> (${l.category}) ${btn}<br>
-                        <span style="color:#94a3b8;">${l.content}</span>
+                        <img src="${logAvatar}" class="avatar" style="width:28px; height:28px;" onerror="this.src='https://cdn-icons-png.flaticon.com/512/149/149071.png'">
+                        <div>
+                            <b>[${l.time}]</b> ${l.user_name} &rarr; <code>${l.channel}</code> (${l.category}) ${btn}<br>
+                            <span style="color:#94a3b8;">${l.content}</span>
+                        </div>
                     </div>`;
                 });
                 document.getElementById('logs_container').innerHTML = lHtml || "No recent activity.";
             } catch(e) {}
         }
 
+        async function clearAllLogs() {
+            if(!confirm("Are you sure you want to clear all live post logs?")) return;
+            await fetch(`${FIREBASE}/post_logs.json`, { method: 'DELETE' });
+            loadAdminData();
+        }
+
         async function saveAdminPolicies() {
             const gRes = await fetch(`${FIREBASE}/global_config.json`);
             const gData = await gRes.json() || {};
-
             const newPin = document.getElementById('new_admin_pin').value.trim();
             if(newPin) gData.admin_pin = newPin;
             gData.force_channels = document.getElementById('adm_force_channels').value.trim();
@@ -430,15 +465,23 @@ USER_STEPS = {}
 @bot.on_message(filters.command("start") & filters.private)
 async def start_handler(client, message):
     uid = str(message.from_user.id)
+    today = datetime.utcnow().strftime("%Y-%m-%d")
     u_data = db_get(f"users/{uid}")
+    
+    photo_url = f"https://t.me/i/userpic/320/{message.from_user.username}.jpg" if message.from_user.username else ""
+
     if not u_data:
         db_put(f"users/{uid}", {
             "first_name": message.from_user.first_name or "User",
             "username": message.from_user.username or "",
+            "photo_url": photo_url,
+            "created_at": today,
             "target_channel": "", "channel_category": "Mod Apps",
             "channel_tag": "@MyChannel", "footer_text": "⌲ @MyChannel\nShare with friends 👥",
             "remove_languages": "", "blocked_words": "", "is_banned": False
         })
+    elif photo_url and not u_data.get("photo_url"):
+        db_put(f"users/{uid}/photo_url", photo_url)
 
     if u_data.get("is_banned", False):
         await message.reply_text("🚫 You are banned from using this bot.")
@@ -478,6 +521,7 @@ async def callback_gate(client, cb):
         await cb.message.reply_text(
             "📍 **Step 1: Send your Channel or Group ID:**\n\n"
             "👉 e.g. `-100xxxxxxxxxx`\n\n"
+            "🔍 **[Get ID from @userinfobot](https://t.me/userinfobot)** (Click to find ID)\n\n"
             "⚠️ **Rules:**\n"
             "1. You must be the **Owner/Admin** of that channel/group.\n"
             "2. Make sure this bot is added as an **Admin with Post Messages**."
@@ -608,6 +652,7 @@ async def message_dispatcher(client, message):
         db_post("post_logs", {
             "time": datetime.utcnow().strftime("%H:%M:%S"),
             "user_id": uid, "user_name": message.from_user.first_name or "User",
+            "photo_url": u_data.get("photo_url", ""),
             "channel": target_channel, "category": u_data.get("channel_category", "Mod Apps"),
             "post_link": post_link,
             "content": (message.caption or message.text or getattr(message.document, 'file_name', 'Media File'))[:45]
@@ -616,11 +661,18 @@ async def message_dispatcher(client, message):
         db_put(f"global_config/daily_stats/{today}", (curr if isinstance(curr, int) else 0) + 1)
 
     except Exception as e:
-        await status.edit_text(f"❌ Failed to post: {e}")
+        err_str = str(e)
+        if "PEER_ID_INVALID" in err_str or "Peer id invalid" in err_str:
+            await status.edit_text(
+                "❌ **Failed to post: Peer ID Invalid!**\n\n"
+                "👉 **Please forward ANY post from your channel to this bot**, so the bot can recognize your channel!"
+            )
+        else:
+            await status.edit_text(f"❌ Failed to post: {err_str}")
 
 async def main():
     await bot.start()
-    print(">>> Unified SaaS Bot Running! <<<")
+    print(">>> 100% English Multi-User SaaS Bot Running! <<<")
     await idle()
     await bot.stop()
 
