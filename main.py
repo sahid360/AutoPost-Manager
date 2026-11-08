@@ -15,7 +15,7 @@ import requests
 import telebot
 from telebot import types
 
-# === আপনার নতুন সচল Bot Token ===
+# === আপনার আপডেটেড নতুন Bot Token ===
 BOT_TOKEN = "9163046758:AAH_F4G9opMsa3CVZavt2pXx0Ey9eOhYBE0"
 BOT_USERNAME = "@QRCodeMakerTBot"
 DEFAULT_ADMIN_PASS = "Admin"
@@ -136,7 +136,7 @@ def register_user(user):
         conn.commit()
         conn.close()
     except Exception as e:
-        print(f"User Register Error: {e}")
+        print(f"DB Error: {e}")
 
 
 def is_user_banned(user_id):
@@ -359,13 +359,11 @@ class WebAdminHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
 
-        # বট স্ট্যাটাস অন/অফ
         if self.path == "/admin/toggle_status":
             current_status = get_setting("bot_status", "on")
             new_status = "off" if current_status == "on" else "on"
             set_setting("bot_status", new_status)
 
-        # পাসওয়ার্ড পরিবর্তন
         elif self.path == "/admin/change_pass":
             old_p = params.get("old_pass", [""])[0].strip()
             new_p = params.get("new_pass", [""])[0].strip()
@@ -375,7 +373,6 @@ class WebAdminHandler(BaseHTTPRequestHandler):
             ):
                 set_setting("admin_pass", new_p)
 
-        # চ্যানেল যুক্ত
         elif self.path == "/admin/add_chat":
             chat_user = params.get("chat_username", [""])[0].strip()
             chat_title = params.get("chat_title", ["Channel"])[0].strip()
@@ -392,7 +389,6 @@ class WebAdminHandler(BaseHTTPRequestHandler):
                 conn.commit()
                 conn.close()
 
-        # চ্যানেল মুছে ফেলা
         elif self.path == "/admin/del_chat":
             chat_id = params.get("id", [""])[0]
             if chat_id:
@@ -402,7 +398,6 @@ class WebAdminHandler(BaseHTTPRequestHandler):
                 conn.commit()
                 conn.close()
 
-        # ব্যান / আনব্যান
         elif self.path == "/admin/toggle_ban":
             target_id = params.get("user_id", [""])[0]
             if target_id:
@@ -416,7 +411,6 @@ class WebAdminHandler(BaseHTTPRequestHandler):
                 conn.commit()
                 conn.close()
 
-        # হিস্ট্রি ক্লিয়ার
         elif self.path == "/admin/clear_logs":
             conn = get_db()
             c = conn.cursor()
@@ -424,7 +418,6 @@ class WebAdminHandler(BaseHTTPRequestHandler):
             conn.commit()
             conn.close()
 
-        # স্পন্সর ব্রডকাস্ট
         elif self.path == "/admin/send_sponsor":
             text = params.get("text", [""])[0].strip()
             photo_url = params.get("photo_url", [""])[0].strip()
@@ -683,7 +676,6 @@ class WebAdminHandler(BaseHTTPRequestHandler):
                         <form action="/admin/logout" method="POST" style="margin:0;"><button style="padding:5px 10px;background:#e11d48;font-size:11px;width:auto;">Logout</button></form>
                     </div>
 
-                    <!-- 1. STATS & CHART CARD WITH FILTER BUTTONS -->
                     <div class="box">
                         <div class="filter-bar">
                             <button class="filter-btn active" onclick="setFilter('today', this)">Today</button>
@@ -704,7 +696,6 @@ class WebAdminHandler(BaseHTTPRequestHandler):
                         </div>
                     </div>
 
-                    <!-- 2. BOT ON/OFF SWITCH CARD -->
                     <div class="box" style="display:flex;justify-content:space-between;align-items:center;">
                         <div>
                             <h3 style="margin:0;font-size:16px;">⚡ Bot Status Control</h3>
@@ -719,7 +710,6 @@ class WebAdminHandler(BaseHTTPRequestHandler):
                         </form>
                     </div>
 
-                    <!-- 3. REQUIRED CHANNELS WITH JOIN COUNTER -->
                     <div class="box">
                         <h3>📢 Required Channels / Groups</h3>
                         <form action="/admin/add_chat" method="POST">
@@ -742,7 +732,6 @@ class WebAdminHandler(BaseHTTPRequestHandler):
                         </table>
                     </div>
 
-                    <!-- 4. USER MANAGEMENT 👥 -->
                     <div class="box">
                         <h3>User Management 👥</h3>
                         <table>
@@ -765,7 +754,6 @@ class WebAdminHandler(BaseHTTPRequestHandler):
                         </table>
                     </div>
 
-                    <!-- 5. SPONSOR BROADCAST BOX -->
                     <div class="box">
                         <h3>📣 Sponsor Broadcast Box</h3>
                         <form action="/admin/send_sponsor" method="POST">
@@ -791,7 +779,6 @@ class WebAdminHandler(BaseHTTPRequestHandler):
                         </table>
                     </div>
 
-                    <!-- 6. CHANGE PASSWORD BOX -->
                     <div class="box">
                         <h3>🔐 Change Admin Password</h3>
                         <form action="/admin/change_pass" method="POST">
@@ -801,7 +788,6 @@ class WebAdminHandler(BaseHTTPRequestHandler):
                         </form>
                     </div>
 
-                    <!-- 7. LIVE ACTIVITY HISTORY AT THE BOTTOM -->
                     <div class="box">
                         <h3>
                             <span>📜 Live Activity History</span>
@@ -815,7 +801,6 @@ class WebAdminHandler(BaseHTTPRequestHandler):
                     </div>
                 </div>
 
-                <!-- REAL-TIME JS ENGINE (NO RELOAD) -->
                 <script>
                     let currentFilter = 'today';
                     let chartInstance = null;
@@ -1280,11 +1265,23 @@ def handle_callbacks(call):
         session["prompt_msg_id"] = prompt.message_id
 
 
-# পোলিং ক্র্যাশ-প্রুফ রানার
-print("QR Studio Master is running live...")
+# === ক্র্যাশ-প্রুফ সেফ রানার ===
+print("QR Studio Master Server Started...")
+
 while True:
     try:
+        me = bot.get_me()
+        print(f"SUCCESS: Connected to Telegram as @{me.username}!")
         bot.infinity_polling(skip_pending=True, timeout=20)
+    except telebot.apihelper.ApiTelegramException as e:
+        if e.error_code == 401:
+            print(
+                "CRITICAL: 401 Unauthorized! The token in main.py is INVALID."
+            )
+            time.sleep(25)
+        else:
+            print(f"Telegram Connection Error: {e}")
+            time.sleep(5)
     except Exception as e:
-        print(f"Polling recovered from error: {e}")
-        time.sleep(3)
+        print(f"General Loop Error: {e}")
+        time.sleep(5)
